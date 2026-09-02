@@ -1,0 +1,15 @@
+[Unit]
+Description=Atualizacao PF - Streamlit
+After=network.target
+
+[Service]
+User=apppf
+WorkingDirectory=/opt/atualizacao-pf
+ExecStart=/opt/atualizacao-pf/venv/bin/streamlit run app_streamlit.py \
+    --server.headless true --server.port 8501 --server.address 127.0.0.1
+Restart=always
+RestartSec=5
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target
