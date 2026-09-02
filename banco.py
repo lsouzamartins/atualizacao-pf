@@ -94,6 +94,7 @@ def autenticar(conn, login, senha, agora=None):
     conn.execute("UPDATE usuarios SET falhas_seguidas=0, bloqueado_ate=NULL WHERE id=?",
                  (row["id"],))
     conn.commit()
+    row = conn.execute("SELECT * FROM usuarios WHERE id=?", (row["id"],)).fetchone()
     return dict(row)
 
 

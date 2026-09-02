@@ -47,3 +47,14 @@ def test_registra_execucao_e_resumos(tmp_path):
     dia = banco.resumos_do_dia(conn, "2026-09-01")
     assert dia.loc[dia["convenio"] == "BRADESCO", "vlr_bruto"].iloc[0] == 100.0
     conn.close()
+
+def test_autenticar_devolve_estado_zerado_apos_falhas(tmp_path):
+    db = str(tmp_path / "pf.db")
+    conn = banco.conectar(db); banco.inicializar_banco(conn)
+    banco.criar_usuario(conn, "leo", "Leo", "senha12345")
+    agora = "2026-09-01T10:00:00"
+    banco.registrar_falha(conn, "leo", agora=agora)
+    banco.registrar_falha(conn, "leo", agora=agora)
+    usuario = banco.autenticar(conn, "leo", "senha12345", agora=agora)
+    assert usuario["falhas_seguidas"] == 0 and usuario["bloqueado_ate"] is None
+    conn.close()
