@@ -136,7 +136,6 @@ if executar and not st.session_state.em_andamento:
 
     sucesso = False
     try:
-        # Sessão de uploads desta execução (apagada ao final, com sucesso ou erro)
         os.makedirs(pasta_sessao, exist_ok=True)
         for nome, upload in arquivos.items():
             with open(os.path.join(pasta_sessao, nome), "wb") as f:
@@ -177,8 +176,8 @@ if executar and not st.session_state.em_andamento:
             banco.registrar_execucao(conn, st.session_state["usuario"]["login"],
                                      "falha", str(e)[:500], [])
             conn.close()
-        except Exception as e:
-            print(f"[AVISO] Não foi possível registrar a falha no banco: {e}")
+        except Exception as e_reg:
+            print(f"[AVISO] Não foi possível registrar a falha no banco: {e_reg}")
         try:
             log_path = salvar_log_erro(PASTA_ERROS, e)
             print(f"Diagnóstico salvo em: {log_path}")
