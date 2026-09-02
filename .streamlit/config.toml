@@ -1,0 +1,43 @@
+# Tema claro minimalista — Atualização PF · Hospital Israelita Albert Sabin
+# Base única (sem dark mode): o app trava o modo claro.
+[theme]
+base = "light"
+primaryColor = "#1C5A8A"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F8FAFC"
+codeBackgroundColor = "#F8FAFC"
+codeTextColor = "#0F172A"
+textColor = "#0F172A"
+linkColor = "#1C5A8A"
+borderColor = "#E2E8F0"
+showWidgetBorder = true
+showSidebarBorder = true
+baseRadius = "10px"
+buttonRadius = "10px"
+font = "Segoe UI"
+codeFont = "Consolas"
+baseFontSize = 15
+codeFontSize = "0.85rem"
+baseFontWeight = 400
+headingFontSizes = ["30px", "24px", "20px", "17px", "15px", "13px"]
+headingFontWeights = [700, 700, 600, 600, 600, 600]
+linkUnderline = false
+
+# Cores semânticas (alertas, markdown colorido)
+redColor = "#DC2626"
+orangeColor = "#B45309"
+yellowColor = "#B45309"
+greenColor = "#15803D"
+blueColor = "#1C5A8A"
+grayColor = "#64748B"
+
+# Categorias de gráficos
+chartCategoricalColors = ["#1C5A8A", "#15803D", "#B45309", "#DC2626", "#64748B"]
+
+[theme.sidebar]
+backgroundColor = "#F8FAFC"
+secondaryBackgroundColor = "#FFFFFF"
+codeBackgroundColor = "#FFFFFF"
+textColor = "#0F172A"
+borderColor = "#E2E8F0"
+primaryColor = "#1C5A8A"

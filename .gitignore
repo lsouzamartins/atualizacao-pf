@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.pytest_cache/
+relatórios/
+saída/
+dados/
+backups/
+logo de erro/
+*.xls
+*.xlsx
+.env
+.superpowers/
