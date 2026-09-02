@@ -4,25 +4,47 @@ PÁGINA: PROCESSAMENTO — ATUALIZAÇÃO PF · HIAS
 Execução das fases 0–4 (lógica intocável em core.py).
 
 Revisão: Claude Code (Anthropic) · 28/07/2026 · migrada para app_pages/ em 19/08/2026
+· 01/09/2026 · uploads por sessão (file_uploader), gravação no banco e downloads
 ==============================================================================
 """
 import os
 import io
-import subprocess
+import shutil
+from uuid import uuid4
 from datetime import datetime
 from contextlib import redirect_stdout, redirect_stderr
 
+import pandas as pd
 import streamlit as st
+
+import banco
 
 from ui_comum import icone, pastas, VERSAO
 from core import (
-    encontrar_arquivo_entrada,
     salvar_log_erro,
     gerar_resumo,
     processar_fase_0_wpd,
     processar_fase_1_nao_identificado,
     processar_fases_2_3_4_hias,
 )
+
+
+def agregar_para_banco(df_ni: pd.DataFrame) -> pd.DataFrame:
+    """Agrega o df_ni da Fase 1 em resumos diários por convênio (mesmas regras
+    de limpeza da página Resumo do dia)."""
+    df = df_ni.copy()
+    df["Data"] = pd.to_datetime(df["Data"], errors="coerce", dayfirst=True).dt.date
+    df = df.dropna(subset=["Data"])
+    df = df[df[["Depósito Bruto", "Depósito Liq.", "Quitação",
+                "Não Identificado"]].sum(axis=1) != 0.0]
+    return (
+        df.groupby(["Data", "Convênio"], as_index=False)
+          .agg(vlr_bruto=("Depósito Bruto", "sum"),
+               vlr_liquido=("Depósito Liq.", "sum"),
+               quitado=("Quitação", "sum"),
+               nao_identificado=("Não Identificado", "sum"))
+          .rename(columns={"Data": "data", "Convênio": "convenio"})
+    )
 
 
 # ==============================================================================
@@ -33,6 +55,7 @@ PASTA_RAIZ = _caminhos["raiz"]
 PASTA_RELATORIOS = _caminhos["relatorios"]
 PASTA_SAIDA = _caminhos["saida"]
 PASTA_ERROS = _caminhos["erros"]
+PASTA_UPLOADS = os.path.join(PASTA_RAIZ, "uploads")
 
 
 # ==============================================================================
@@ -55,45 +78,23 @@ col_acoes, col_status = st.columns([1.5, 1], gap="large")
 with col_acoes:
     st.markdown(f"### {icone('play', 20, '#1C5A8A')} Executar Processamento", unsafe_allow_html=True)
 
-    try:
-        arquivos_necessarios = [
-            encontrar_arquivo_entrada(PASTA_RAIZ, "WPD-26.xls"),
-            encontrar_arquivo_entrada(PASTA_RAIZ, "Não_Identificado.xls"),
-            encontrar_arquivo_entrada(PASTA_RAIZ, "Posição Financeira Hias.xlsx"),
-        ]
-        arquivos_faltando = [arq for arq in arquivos_necessarios if not os.path.exists(arq)]
-    except FileNotFoundError as e:
-        arquivos_faltando = [str(e)]
+    st.markdown("### 📂 Arquivos do dia")
+    col1, col2, col3 = st.columns(3)
+    arquivos = {
+        "WPD-26.xls": col1.file_uploader("WPD-26 (.xls)", type=["xls"], key="up_wpd"),
+        "Não_Identificado.xls": col2.file_uploader("Não Identificado (.xls)", type=["xls"], key="up_ni"),
+        "Posição Financeira Hias.xlsx": col3.file_uploader("Posição Financeira Hias (.xlsx)",
+                                                           type=["xlsx"], key="up_hias"),
+    }
+    btn_desabilitado = not all(arquivos.values()) or st.session_state.em_andamento
 
-    if arquivos_faltando:
-        st.error("**Arquivos necessários não encontrados:**")
-        for arq in arquivos_faltando:
-            st.write(f"- `{arq}`")
-        st.info(f"Pasta raiz: `{PASTA_RAIZ}`")
-        btn_desabilitado = True
-    else:
-        btn_desabilitado = False
-        with st.expander("Arquivos de entrada encontrados", icon=":material/task_alt:", expanded=False):
-            for arq in arquivos_necessarios:
-                tamanho = os.path.getsize(arq)
-                st.write(f"- ✅ `{os.path.basename(arq)}` ({tamanho / 1024:.1f} KB)")
-
-    btn_col1, btn_col2 = st.columns([1, 1], gap="small")
-    with btn_col1:
-        executar = st.button(
-            "Atualizar posição financeira",
-            type="primary",
-            icon=":material/play_arrow:",
-            disabled=btn_desabilitado or st.session_state.em_andamento,
-            width="stretch",
-        )
-    with btn_col2:
-        abrir_pasta = st.button("Abrir pasta de saída", type="secondary", icon=":material/folder_open:", width="stretch")
-        if abrir_pasta:
-            if os.path.exists(PASTA_SAIDA):
-                subprocess.Popen(['explorer', PASTA_SAIDA])
-            else:
-                st.warning("A pasta de saída ainda não existe. Execute primeiro.")
+    executar = st.button(
+        "Atualizar posição financeira",
+        type="primary",
+        icon=":material/play_arrow:",
+        disabled=btn_desabilitado,
+        width="stretch",
+    )
 
 with col_status:
     st.markdown(f"### {icone('activity', 20, '#1C5A8A')} Status", unsafe_allow_html=True)
@@ -122,10 +123,16 @@ if executar and not st.session_state.em_andamento:
     progress_bar = st.progress(0, text="Iniciando...")
     log_buffer = io.StringIO()
 
-    # Prepara caminhos
-    xls_wpd = encontrar_arquivo_entrada(PASTA_RAIZ, "WPD-26.xls")
-    xls_nao_identificado = encontrar_arquivo_entrada(PASTA_RAIZ, "Não_Identificado.xls")
-    xlsx_hias_base = encontrar_arquivo_entrada(PASTA_RAIZ, "Posição Financeira Hias.xlsx")
+    # Sessão de uploads desta execução (apagada ao final, com sucesso ou erro)
+    pasta_sessao = os.path.join(PASTA_UPLOADS, uuid4().hex)
+    os.makedirs(pasta_sessao, exist_ok=True)
+    for nome, upload in arquivos.items():
+        with open(os.path.join(pasta_sessao, nome), "wb") as f:
+            f.write(upload.getbuffer())
+
+    xls_wpd = os.path.join(pasta_sessao, "WPD-26.xls")
+    xls_nao_identificado = os.path.join(pasta_sessao, "Não_Identificado.xls")
+    xlsx_hias_base = os.path.join(pasta_sessao, "Posição Financeira Hias.xlsx")
     xlsx_wpd_limpo = os.path.join(PASTA_SAIDA, "WPD-26_Extraido.xlsx")
     xlsx_nao_identificado_limpo = os.path.join(PASTA_SAIDA, "Não_Identificado_Extraido.xlsx")
     data_hoje = datetime.now().strftime("%d.%m.%y")
@@ -135,13 +142,7 @@ if executar and not st.session_state.em_andamento:
     try:
         with redirect_stdout(log_buffer), redirect_stderr(log_buffer):
             # Limpeza de Excel residual
-            print("🧹 Verificando e liberando arquivos de execuções anteriores...")
-            try:
-                subprocess.run(["taskkill", "/f", "/im", "EXCEL.EXE"],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                print("   OK — processos do Excel liberados.\n")
-            except Exception:
-                pass
+            print("🧹 Preparando ambiente...")
 
             # FASE 0 (0% → 33%)
             progress_bar.progress(5, text="[Fase 0/4] Processando WPD-26...")
@@ -169,6 +170,14 @@ if executar and not st.session_state.em_andamento:
     except Exception as e:
         print(f"\n[CRÍTICO] Ocorreu um erro: {type(e).__name__}: {e}")
         try:
+            conn = banco.conectar()
+            banco.inicializar_banco(conn)
+            banco.registrar_execucao(conn, st.session_state["usuario"]["login"],
+                                     "falha", str(e)[:500], [])
+            conn.close()
+        except Exception:
+            pass
+        try:
             log_path = salvar_log_erro(PASTA_ERROS, e)
             print(f"Diagnóstico salvo em: {log_path}")
         except Exception:
@@ -177,7 +186,23 @@ if executar and not st.session_state.em_andamento:
         sucesso = False
 
     finally:
+        shutil.rmtree(pasta_sessao, ignore_errors=True)
         st.session_state.em_andamento = False
+
+    if sucesso:
+        try:
+            conn = banco.conectar()
+            banco.inicializar_banco(conn)
+            df_resumos = agregar_para_banco(df_ni)
+            arquivos_gerados = [os.path.basename(xlsx_hias_final),
+                                os.path.basename(xlsx_wpd_limpo),
+                                os.path.basename(xlsx_nao_identificado_limpo)]
+            eid = banco.registrar_execucao(conn, st.session_state["usuario"]["login"],
+                                           "sucesso", "", arquivos_gerados)
+            banco.gravar_resumos(conn, eid, df_resumos)
+            conn.close()
+        except Exception as e:
+            print(f"[AVISO] Processamento OK, mas falha ao gravar no banco: {e}")
 
     log_texto = log_buffer.getvalue()
     st.session_state.ultimo_log = log_texto
@@ -191,6 +216,14 @@ if executar and not st.session_state.em_andamento:
 
     with st.container(height=450, border=True):
         st.code(log_texto, language=None, line_numbers=False)
+
+    if sucesso and os.path.exists(xlsx_hias_final):
+        with open(xlsx_hias_final, "rb") as f:
+            st.download_button("Baixar Posição Financeira atualizada",
+                               data=f.read(),
+                               file_name=os.path.basename(xlsx_hias_final),
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               type="primary")
     st.markdown(f'<div class="app-footer">{VERSAO}</div>', unsafe_allow_html=True)
 
 elif st.session_state.ultimo_log:
@@ -218,7 +251,6 @@ else:
             <li><b>Fase 4:</b> Salva uma nova versão datada do arquivo Hias</li>
         </ol>
         <p class="info-paths">
-            {icone('folder', 14, '#64748B')} Entrada: <code>{PASTA_RELATORIOS}</code>&nbsp;&nbsp;
             {icone('folder-output', 14, '#64748B')} Saída: <code>{PASTA_SAIDA}</code>
         </p>
     </div>
