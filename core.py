@@ -15,13 +15,12 @@ import re
 import shutil
 import subprocess
 import traceback
+import json
 from datetime import datetime
 
 import pandas as pd
 from openpyxl.styles import Alignment, Border, Font, Side
 from openpyxl.utils import get_column_letter
-import win32com.client as win32
-import pythoncom
 
 
 # ==============================================================================
@@ -366,281 +365,33 @@ def identificar_linhas_novas_bd1(df_wpd: pd.DataFrame, remessas_existentes: set)
     return novas.sort_values("Emissão").reset_index(drop=True)
 
 
-def _anexar_emissoes_bd1(excel, workbook_hias, xlsx_wpd_limpo: str):
-    """
-    Anexa ao fim da aba BD1 as remessas do WPD-26 que ainda não existem lá
-    (dedup por Remessa), herdando o estilo da última linha, aplicando as
-    fórmulas das colunas R–V e redimensionando a tabela BD_1.
-    """
-    print("\n[FASE 3b] Anexando novas emissões à aba BD1...")
-    ws_bd1 = workbook_hias.Sheets("BD1")
-
-    # Remessas já presentes na BD1 (coluna A)
-    fim_bd1 = ws_bd1.Cells(ws_bd1.Rows.Count, 1).End(-4162).Row
-    if fim_bd1 < 2:
-        print("   BD1 vazia — nada a deduplicar; anexando todo o WPD.")
-        remessas_existentes = set()
-    else:
-        valores_col_a = ws_bd1.Range(ws_bd1.Cells(2, 1), ws_bd1.Cells(fim_bd1, 1)).Value
-        if isinstance(valores_col_a, tuple):
-            valores_col_a = [linha[0] for linha in valores_col_a]
-        else:
-            valores_col_a = [valores_col_a]
-        remessas_existentes = {_normalizar_remessa(v) for v in valores_col_a if v is not None}
-
-    # Linhas novas (dedup por Remessa, ordenadas por Emissão)
-    df_wpd = pd.read_excel(xlsx_wpd_limpo)
-    novas = identificar_linhas_novas_bd1(df_wpd, remessas_existentes)
-    if novas.empty:
-        print("   Nenhuma emissão nova para anexar à BD1.")
-        return
-
-    n = len(novas)
-    linha_destino = fim_bd1 + 1
-    print(f"   {n} emissões novas detectadas "
-          f"(Remessa {novas['Remessa'].iloc[0]} ... {novas['Remessa'].iloc[-1]}).")
-
-    # Estilo: herda da última linha existente da BD1 (bordas, fonte e formatos)
-    ws_bd1.Range(ws_bd1.Cells(fim_bd1, 1), ws_bd1.Cells(fim_bd1, 22)).Copy()
-    ws_bd1.Range(
-        ws_bd1.Cells(linha_destino, 1), ws_bd1.Cells(linha_destino + n - 1, 22)
-    ).PasteSpecial(Paste=-4122)  # xlPasteFormats
-    excel.CutCopyMode = False
-
-    # Valores das colunas A–Q (mesma ordem do WPD extraído)
-    colunas_wpd = [
-        "Remessa", "Protocolo", "Emissão", "Vencimento", "Entrega", "Baixa",
-        "Nota Fiscal", "Convênio", "Faturado", "Valor Pago", "Valor ISS",
-        "Vlr Guia", "% Pré-glosa", "Valor Glosa", "% Glosa", "Atraso", "Faturas"
-    ]
-    colunas_data = {"Emissão", "Vencimento", "Entrega", "Baixa"}
-    matriz = []
-    for _, linha in novas.iterrows():
-        celulas = []
-        for col in colunas_wpd:
-            valor = linha[col]
-            if pd.isna(valor):
-                celulas.append(None)
-            elif col == "Protocolo":
-                try:
-                    celulas.append(int(float(str(valor).strip())))
-                except (TypeError, ValueError):
-                    celulas.append(str(valor).strip())
-            elif col in colunas_data:
-                celulas.append(valor.to_pydatetime())
-            else:
-                celulas.append(valor)
-        matriz.append(celulas)
-
-    ws_bd1.Range(
-        ws_bd1.Cells(linha_destino, 1), ws_bd1.Cells(linha_destino + n - 1, 17)
-    ).Value = matriz
-
-    # Fórmulas das colunas R–V (Atrasado, A vencer, Recurso, Recurso pago, Tipo de remessa).
-    # Sintaxe EN via .Formula: funciona em qualquer Excel, independente do
-    # separador de lista regional (o .FormulaLocal falha quando o Windows usa ';').
-    # Escritas por coluna (matriz) em 5 chamadas COM, em vez de célula a célula.
-    linhas = range(linha_destino, linha_destino + n)
-    formulas_por_coluna = {
-        18: [f'=SUMIFS(L{r},D{r},"<"&TODAY(),F{r},"")' for r in linhas],
-        19: [f'=SUMIFS(L{r},D{r},">"&TODAY(),F{r},"")' for r in linhas],
-        20: [f'=IF(RIGHT(A{r},3)="(R)",L{r},0)' for r in linhas],
-        21: [f'=IF(T{r}=0,0,J{r})' for r in linhas],
-        22: [f'=IF(RIGHT(A{r},3)="(R)","Recurso","Comum")' for r in linhas],
-    }
-    for col, formulas in formulas_por_coluna.items():
-        ws_bd1.Range(
-            ws_bd1.Cells(linha_destino, col), ws_bd1.Cells(linha_destino + n - 1, col)
-        ).Formula = [[f] for f in formulas]
-
-    # Redimensiona a tabela estruturada BD_1 para incluir as novas linhas
-    for tabela in ws_bd1.ListObjects:
-        if tabela.Name == "BD_1":
-            tabela.Resize(ws_bd1.Range(f"A1:V{linha_destino + n - 1}"))
-            print(f"   Tabela 'BD_1' redimensionada para A1:V{linha_destino + n - 1}.")
-
-    print(f"   BD1 atualizada: linhas {linha_destino} a {linha_destino + n - 1} anexadas.")
-
-
-def _normalizar_aba_a_quitar(excel, workbook_hias):
-    """Normaliza a aba À Quitar antes de salvar o arquivo final.
-
-    O bloco histórico da BD2 grava os nomes de convênio com largura fixa de 35
-    caracteres ('BRADESCO SEGUROS' + espaços à direita); o bloco novo do Não
-    Identificado grava sem os espaços. A pivot da aba À Quitar tratava cada
-    grafia como um convênio diferente — abrindo DOIS botões para o mesmo
-    convênio (um com as datas antigas, outro com as novas). Aqui:
-      1. remove os espaços de todos os nomes de convênio na coluna A da BD2;
-      2. atualiza a pivot (cache + tabela);
-      3. recolhe os itens de convênio (ShowDetail=False) — os itens novos
-         nascem expandidos quando a pivot é atualizada após a injeção.
-    """
-    ws_hias = workbook_hias.Sheets("BD2")
-    fim = ws_hias.Cells(ws_hias.Rows.Count, 1).End(-4162).Row
-    if fim < 2:
-        return
-
-    # 1) Remove espaços à esquerda/direita de todos os convênios (coluna A)
-    valores = ws_hias.Range(ws_hias.Cells(2, 1), ws_hias.Cells(fim, 1)).Value
-    linhas = list(valores) if isinstance(valores, tuple) else [[valores]]
-    normalizados = []
-    for linha in linhas:
-        v = linha[0] if isinstance(linha, tuple) else linha
-        normalizados.append([v.strip()] if isinstance(v, str) else [v])
-    ws_hias.Range(ws_hias.Cells(2, 1), ws_hias.Cells(fim, 1)).Value = normalizados
-    print("   Nomes de convênio da BD2 normalizados (sem espaços à direita).")
-
-    # 2) Atualiza a pivot da aba À Quitar e recolhe os convênios
-    try:
-        ws_a_quitar = workbook_hias.Sheets("À Quitar")
-    except Exception:
-        return  # aba inexistente — nada a normalizar
-
-    for pt in ws_a_quitar.PivotTables():
-        try:
-            pt.PivotCache().Refresh()
-        except Exception:
-            pass  # cache já atualizado — o RefreshTable abaixo cobre
-        pt.RefreshTable()
-
-        try:
-            campo = pt.PivotFields("Convênio")
-        except Exception:
-            continue
-        for i in range(1, campo.PivotItems().Count + 1):
-            item = campo.PivotItems(i)
-            try:
-                item.ShowDetail = False
-            except Exception:
-                pass  # item sem dados ou travado pela timeline — nada a recolher
-    print("   Aba À Quitar normalizada: um item por convênio, todos recolhidos.")
-
-
 # ==============================================================================
 # PROCESSAMENTO — FASES 2, 3 E 4: INTEGRAÇÃO COM O HIAS VIA EXCEL
 # ==============================================================================
 def processar_fases_2_3_4_hias(
-    xlsx_nao_identificado_limpo: str,
-    xlsx_hias_base: str,
-    xlsx_hias_final: str,
-    pasta_raiz: str,
-    pasta_saida: str,
-    xlsx_wpd_limpo: str,
+        xlsx_nao_identificado_limpo: str,
+        xlsx_hias_base: str,
+        xlsx_hias_final: str,
+        pasta_raiz: str,
+        pasta_saida: str,
+        xlsx_wpd_limpo: str,
 ):
-    """
-    Integração Excel COM:
-      Fase 2: Abre Excel e prepara ambiente
-      Fase 3: Injeta dados processados na aba BD2
-      Fase 4: Salva arquivo final com formatação Brasil
-    """
-    pythoncom.CoInitialize()
-    try:
-        print("\n" + "=" * 60)
-        print("[FASE 2] Integrando dados ao Hias via Excel...")
-        print("=" * 60)
-
-        # Backup automático antes de modificar
-        print("📦 Criando backup de segurança do Hias base...")
-        caminho_backup = criar_backup_hias(xlsx_hias_base, pasta_saida)
-        print(f"   Backup salvo em: {os.path.basename(caminho_backup)}")
-
-        excel = win32.gencache.EnsureDispatch('Excel.Application')
-        excel.Visible = False
-        excel.DisplayAlerts = False
-
-        workbook_limpo = None
-        workbook_hias = None
-
-        try:
-            workbook_limpo = excel.Workbooks.Open(xlsx_nao_identificado_limpo)
-            workbook_hias = excel.Workbooks.Open(xlsx_hias_base)
-
-            nomes_abas = [sheet.Name for sheet in workbook_hias.Sheets]
-            if "BD2" not in nomes_abas:
-                raise KeyError(
-                    f"Aba 'BD2' não encontrada no arquivo Hias.\n"
-                    f"Abas disponíveis: {nomes_abas}\n"
-                    f"Arquivo: {xlsx_hias_base}"
-                )
-
-            excel.ScreenUpdating = False
-            excel.EnableEvents = False
-            excel.Calculation = -4135  # xlCalculationManual
-
-            ws_limpo = workbook_limpo.Sheets("Dados Extraídos")
-            ws_hias = workbook_hias.Sheets("BD2")
-
-            fim_dados_limpos = ws_limpo.Cells(ws_limpo.Rows.Count, 1).End(-4162).Row
-            fim_atual_hias = ws_hias.Cells(ws_hias.Rows.Count, 1).End(-4162).Row
-            linha_corte = 806
-
-            if fim_atual_hias >= linha_corte:
-                print(f"Deletando bloco de linhas obsoleto de {linha_corte} até {fim_atual_hias}")
-                ws_hias.Rows(f"{linha_corte}:{fim_atual_hias}").Delete()
-
-            print("[FASE 3] Clonando e injetando layout...")
-            if fim_dados_limpos >= 2:
-                linha_final_inserida = linha_corte + (fim_dados_limpos - 2)
-
-                origem_intervalo = ws_limpo.Range(ws_limpo.Cells(2, 1), ws_limpo.Cells(fim_dados_limpos, 9))
-                origem_intervalo.Copy()
-                destino_intervalo = ws_hias.Cells(linha_corte, 1)
-                destino_intervalo.PasteSpecial(Paste=-4163)  # xlPasteValues
-                destino_intervalo.PasteSpecial(Paste=-4122)  # xlPasteFormats
-                excel.CutCopyMode = False
-
-                # Formata coluna de data (B) como dd/mm/aaaa
-                coluna_data = ws_hias.Range(
-                    ws_hias.Cells(linha_corte, 2), ws_hias.Cells(linha_final_inserida, 2)
-                )
-                coluna_data.NumberFormatLocal = "dd/mm/aaaa"
-
-                # Formata colunas financeiras (C-I) como moeda Brasil sem R$
-                coluna_financeira = ws_hias.Range(
-                    ws_hias.Cells(linha_corte, 3), ws_hias.Cells(linha_final_inserida, 9)
-                )
-                coluna_financeira.NumberFormat = "#.##0,00"
-
-                if ws_hias.ListObjects.Count > 0:
-                    for tabela in ws_hias.ListObjects:
-                        print(f"Redimensionando Tabela '{tabela.Name}'...")
-                        tabela.Resize(ws_hias.Range(f"A1:I{linha_final_inserida}"))
-                print(f"Intervalo (A806:I{linha_final_inserida}) integrado.")
-                print("Colunas financeiras formatadas como moeda Brasil (#.##0,00).")
-            else:
-                print("Nenhum dado novo para processar.")
-
-            # Anexa as novas emissões do WPD-26 à aba BD1 (antes de salvar)
-            _anexar_emissoes_bd1(excel, workbook_hias, xlsx_wpd_limpo)
-
-            # Normaliza a aba À Quitar: um item por convênio e tudo recolhido
-            _normalizar_aba_a_quitar(excel, workbook_hias)
-
-            print(f"\n[FASE 4] Salvando: {xlsx_hias_final}")
-            workbook_hias.SaveAs(xlsx_hias_final)
-
-        finally:
-            excel.ScreenUpdating = True
-            excel.EnableEvents = True
-            excel.Calculation = -4105
-            if workbook_limpo is not None:
-                workbook_limpo.Close(SaveChanges=False)
-            if workbook_hias is not None:
-                workbook_hias.Close(SaveChanges=False)
-            excel.Quit()
-
-        print("\n" + "=" * 60)
-        print("[FLUXO CONCLUÍDO COM 100% DE SUCESSO]")
-        print("=" * 60)
-
-        dashboard_path = os.path.join(pasta_raiz, "dashboard.html")
-        if os.path.exists(dashboard_path):
-            import webbrowser
-            webbrowser.open(dashboard_path)
-            print("\nDashboard aberto no navegador.")
-
-    finally:
-        pythoncom.CoUninitialize()
+    """Executa a integração Excel em subprocesso (LibreOffice UNO)."""
+    payload = json.dumps({
+        "limpo": xlsx_nao_identificado_limpo, "base": xlsx_hias_base,
+        "final": xlsx_hias_final, "raiz": pasta_raiz,
+        "saida": pasta_saida, "wpd": xlsx_wpd_limpo,
+    })
+    proc = subprocess.run(
+        [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                      "integracao_runner.py"), payload],
+        capture_output=True, text=True)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    if proc.returncode != 0:
+        raise RuntimeError(f"Integração Excel falhou (código {proc.returncode})")
 
 
 # ==============================================================================
@@ -672,16 +423,7 @@ def executar_processo_completo(pasta_raiz: str = None):
     data_hoje = datetime.now().strftime("%d.%m.%y")
     xlsx_hias_final = os.path.join(pasta_saida, f"Posição Financeira Hias_{data_hoje}.xlsx")
 
-    # Mata instâncias residuais do Excel
-    print("🧹 Verificando e liberando arquivos de execuções anteriores...")
-    try:
-        subprocess.run(
-            ["taskkill", "/f", "/im", "EXCEL.EXE"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
-        print("   OK — processos do Excel liberados.\n")
-    except Exception:
-        pass
+    print("🧹 Verificando arquivos de execuções anteriores...")
 
     # Fase 0: WPD-26
     df_wpd = processar_fase_0_wpd(xls_wpd, xlsx_wpd_limpo)
