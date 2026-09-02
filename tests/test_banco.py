@@ -1,4 +1,5 @@
 import os, sqlite3
+import pytest
 import pandas as pd
 import banco
 
@@ -58,3 +59,13 @@ def test_autenticar_devolve_estado_zerado_apos_falhas(tmp_path):
     usuario = banco.autenticar(conn, "leo", "senha12345", agora=agora)
     assert usuario["falhas_seguidas"] == 0 and usuario["bloqueado_ate"] is None
     conn.close()
+
+def test_criar_usuario_rejeita_login_ou_nome_vazio(tmp_path):
+    db = str(tmp_path / "pf.db")
+    conn = banco.conectar(db); banco.inicializar_banco(conn)
+    with pytest.raises(ValueError):
+        banco.criar_usuario(conn, "   ", "Leo", "senha12345")
+    with pytest.raises(ValueError):
+        banco.criar_usuario(conn, "leo", "  ", "senha12345")
+    conn.close()
+

@@ -71,6 +71,10 @@ def _hash_senha(senha: str) -> str:
 
 
 def criar_usuario(conn, login, nome, senha, admin=False):
+    login = login.strip()
+    nome = nome.strip()
+    if not login or not nome:
+        raise ValueError("Login e nome são obrigatórios.")
     if len(senha) < 8:
         raise ValueError("A senha deve ter pelo menos 8 caracteres.")
     cur = conn.execute(
