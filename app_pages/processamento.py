@@ -125,10 +125,6 @@ if executar and not st.session_state.em_andamento:
 
     # Sessão de uploads desta execução (apagada ao final, com sucesso ou erro)
     pasta_sessao = os.path.join(PASTA_UPLOADS, uuid4().hex)
-    os.makedirs(pasta_sessao, exist_ok=True)
-    for nome, upload in arquivos.items():
-        with open(os.path.join(pasta_sessao, nome), "wb") as f:
-            f.write(upload.getbuffer())
 
     xls_wpd = os.path.join(pasta_sessao, "WPD-26.xls")
     xls_nao_identificado = os.path.join(pasta_sessao, "Não_Identificado.xls")
@@ -140,6 +136,12 @@ if executar and not st.session_state.em_andamento:
 
     sucesso = False
     try:
+        # Sessão de uploads desta execução (apagada ao final, com sucesso ou erro)
+        os.makedirs(pasta_sessao, exist_ok=True)
+        for nome, upload in arquivos.items():
+            with open(os.path.join(pasta_sessao, nome), "wb") as f:
+                f.write(upload.getbuffer())
+
         with redirect_stdout(log_buffer), redirect_stderr(log_buffer):
             # Limpeza de Excel residual
             print("🧹 Preparando ambiente...")
@@ -175,8 +177,8 @@ if executar and not st.session_state.em_andamento:
             banco.registrar_execucao(conn, st.session_state["usuario"]["login"],
                                      "falha", str(e)[:500], [])
             conn.close()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[AVISO] Não foi possível registrar a falha no banco: {e}")
         try:
             log_path = salvar_log_erro(PASTA_ERROS, e)
             print(f"Diagnóstico salvo em: {log_path}")
@@ -203,6 +205,7 @@ if executar and not st.session_state.em_andamento:
             conn.close()
         except Exception as e:
             print(f"[AVISO] Processamento OK, mas falha ao gravar no banco: {e}")
+            st.warning(f"Processamento OK, mas falha ao gravar no banco: {e}")
 
     log_texto = log_buffer.getvalue()
     st.session_state.ultimo_log = log_texto

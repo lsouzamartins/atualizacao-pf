@@ -22,7 +22,7 @@ conn.close()
 if df.empty:
     st.info("Sem registros no período.")
 else:
-    df_exib = df.rename(columns={
+    df_exib = df.drop(columns=["execucao_id"]).rename(columns={
         "data": "Data", "convenio": "Convênio", "usuario": "Usuário",
         "status": "Status", "vlr_bruto": "Vlr Bruto", "vlr_liquido": "Vlr Líquido",
         "quitado": "Quitado", "nao_identificado": "Não Identificado"})

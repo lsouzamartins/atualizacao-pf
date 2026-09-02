@@ -45,7 +45,9 @@ if st.button("Baixar backup (.db)"):
     destino = os.path.join(banco.CAMINHO_PADRAO + ".backup")
     banco.backup_banco(banco.CAMINHO_PADRAO, destino)
     with open(destino, "rb") as f:
-        st.download_button("Baixar agora", data=f.read(),
-                           file_name="pf-backup.db", mime="application/octet-stream")
+        dados = f.read()
+    os.remove(destino)
+    st.download_button("Baixar agora", data=dados,
+                       file_name="pf-backup.db", mime="application/octet-stream")
 conn.close()
 st.markdown(f'<div class="app-footer">{VERSAO}</div>', unsafe_allow_html=True)
