@@ -8,7 +8,8 @@ def test_inicializa_e_cria_usuario(tmp_path):
     banco.inicializar_banco(conn)
     uid = banco.criar_usuario(conn, "leonardo", "Leonardo", "senha12345", admin=True)
     row = conn.execute("SELECT login, admin FROM usuarios WHERE id=?", (uid,)).fetchone()
-    assert row == ("leonardo", 1)
+    # comparação por nome de coluna (e não == tuple): sqlite3.Row deixou de ser tupla no Python 3.14
+    assert row["login"] == "leonardo" and row["admin"] == 1
     # senha nunca em claro
     hash_ = conn.execute("SELECT senha_hash FROM usuarios WHERE id=?", (uid,)).fetchone()[0]
     assert hash_ != "senha12345" and hash_.startswith("$2")

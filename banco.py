@@ -51,34 +51,11 @@ BLOQUEIO_MINUTOS = 5
 MAX_FALHAS = 5
 
 
-class _Linha(tuple):
-    """Linha do banco com acesso por nome de coluna e igualdade com tupla.
-
-    Python 3.14 tornou sqlite3.Row um mapping (não mais subclasse de tuple),
-    o que quebra comparações diretas tipo `row == (login, admin)` usadas no
-    código e nos testes. Esta factory reproduz o comportamento pré-3.14:
-    seqüência (tupla) + indexação por nome + conversão dict() via keys().
-    """
-
-    def __new__(cls, cursor, row):
-        instancia = super().__new__(cls, row)
-        instancia._colunas = [descricao[0] for descricao in cursor.description]
-        return instancia
-
-    def __getitem__(self, chave):
-        if isinstance(chave, str):
-            chave = self._colunas.index(chave)
-        return super().__getitem__(chave)
-
-    def keys(self):
-        return self._colunas
-
-
 def conectar(caminho=None):
     caminho = caminho or CAMINHO_PADRAO
     os.makedirs(os.path.dirname(caminho), exist_ok=True)
     conn = sqlite3.connect(caminho)
-    conn.row_factory = _Linha
+    conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
