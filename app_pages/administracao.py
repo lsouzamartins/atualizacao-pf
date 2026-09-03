@@ -11,7 +11,7 @@ if not st.session_state.get("usuario", {}).get("admin"):
 conn = banco.conectar()
 banco.inicializar_banco(conn)
 
-st.markdown(f"### {icone('circle-check', 20, '#1C5A8A')} Usuários")
+st.markdown(f"### {icone('circle-check', 20, '#1C5A8A')} Usuários", unsafe_allow_html=True)
 for row in banco.listar_usuarios(conn):
     papel = "admin" if row["admin"] else "usuário"
     st.write(f"- **{row['login']}** ({row['nome']}) — {papel}")

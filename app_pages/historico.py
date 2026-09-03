@@ -4,7 +4,7 @@ import streamlit as st
 import banco
 from ui_comum import icone, formatar_brl, pastas, VERSAO
 
-st.markdown(f"### {icone('calendar', 20, '#1C5A8A')} Histórico")
+st.markdown(f"### {icone('calendar', 20, '#1C5A8A')} Histórico", unsafe_allow_html=True)
 
 conn = banco.conectar()
 banco.inicializar_banco(conn)
