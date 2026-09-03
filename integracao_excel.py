@@ -204,7 +204,13 @@ def _linhas_novas_originais(df_wpd: pd.DataFrame, remessas_existentes: set) -> p
 def _partes_de(caminho: str) -> dict[str, str]:
     with zipfile.ZipFile(caminho, "r") as z:
         nomes = set(z.namelist())
-        return {n: z.read(n).decode("utf-8") for n in NOMES_PARTES if n in nomes}
+        partes = {n: z.read(n).decode("utf-8") for n in NOMES_PARTES if n in nomes}
+        # o Excel pode renumerar as partes de pivot cache ao salvar (caso real
+        # de 02/09/2026: definition1↔definition2) — inclui todas as existentes
+        # para a seleção por conteúdo em _parte_cache_bd2
+        partes.update({n: z.read(n).decode("utf-8") for n in nomes
+                       if re.fullmatch(r"xl/pivotCache/pivotCacheDefinition\d+\.xml", n)})
+        return partes
 
 
 def _ultima_linha(xml: str) -> int:
@@ -437,11 +443,23 @@ def _ajustar_tabela(xml: str, prefixo: str, novo_fim: int) -> str:
 
 
 def _ajustar_cache1(xml: str, novo_fim: int) -> str:
-    """Atualiza a fonte da pivotCacheDefinition1 (worksheetSource da BD2)."""
+    """Atualiza o ref do cache da BD2 (worksheetSource com ref="A1:I...")."""
     return _substituir_ou_falhar(
         r'(worksheetSource[^>]*?\bref="A1:I)(\d+)(")',
         lambda m: f'{m.group(1)}{novo_fim}{m.group(3)}', xml,
-        "worksheetSource do cache1")
+        "worksheetSource do cache da BD2")
+
+
+def _parte_cache_bd2(partes: dict) -> str | None:
+    """Nome da parte de pivot cache cuja fonte é a BD2 (worksheetSource com
+    ref="A1:I..."). O Excel pode renumerar as partes ao salvar (caso real de
+    02/09/2026: cacheDefinition 1↔2) — a seleção é pelo conteúdo, não pelo
+    nome do arquivo."""
+    for nome in sorted(partes):
+        if re.fullmatch(r"xl/pivotCache/pivotCacheDefinition\d+\.xml", nome):
+            if re.search(r'worksheetSource[^>]*\bref="A1:I\d+"', partes[nome]):
+                return nome
+    return None
 
 
 def _marcar_refresh_on_load(xml: str) -> str:
@@ -554,9 +572,14 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
             novas_celulas += refs
             substituicoes["xl/tables/table2.xml"] = _ajustar_tabela(
                 partes["xl/tables/table2.xml"], "A1:I", fim_bd2_novo)
-            if "xl/pivotCache/pivotCacheDefinition1.xml" in partes:
-                substituicoes["xl/pivotCache/pivotCacheDefinition1.xml"] = _ajustar_cache1(
-                    partes["xl/pivotCache/pivotCacheDefinition1.xml"], fim_bd2_novo)
+            parte_cache_bd2 = _parte_cache_bd2(partes)
+            if parte_cache_bd2 is None:
+                raise RuntimeError(
+                    "Cache da BD2 não encontrado (nenhum pivot cache com "
+                    "worksheetSource ref A1:I) — abortando para não gravar "
+                    "uma saída incorreta.")
+            substituicoes[parte_cache_bd2] = _ajustar_cache1(
+                partes[parte_cache_bd2], fim_bd2_novo)
             print(f"[FASE 3] BD2: bloco atualizado — fim {fim_bd2_novo}.")
         else:
             print("[FASE 3] BD2: nada a mudar.")

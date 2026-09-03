@@ -553,3 +553,63 @@ def test_limpo_none_integra_so_bd1(tmp_path):
         assert 'ref="A1:I2"' in cache1  # BD2 intocada → cache1 permanece no ref original
         assert 'ref="A1:I2"' in zf.read("xl/tables/table2.xml").decode("utf-8")
         assert 'ref="A1:V4"' in zf.read("xl/tables/table1.xml").decode("utf-8")
+
+
+def _trocar_caches(tmp_path, base):
+    """Reescreve a base com as partes de pivot cache RENUMERADAS (1↔2),
+    como o Excel fez no arquivo real de 02/09/2026: cacheDefinition1 passa a
+    ser o cache da BD1 (fonte = tabela BD_1, por nome) e o da BD2
+    (worksheetSource com ref A1:I) vai para cacheDefinition2."""
+    import zipfile
+    with zipfile.ZipFile(base) as z:
+        partes = {n: z.read(n) for n in z.namelist()}
+    cache_bd2 = partes["xl/pivotCache/pivotCacheDefinition1.xml"].decode("utf-8")
+    cache_bd1 = (DECL
+                 + '<pivotCacheDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                 + '<cacheSource type="worksheet"><worksheetSource name="BD_1"/></cacheSource>'
+                 + '</pivotCacheDefinition>')
+    partes["xl/pivotCache/pivotCacheDefinition1.xml"] = cache_bd1
+    partes["xl/pivotCache/pivotCacheDefinition2.xml"] = cache_bd2
+    caminho = tmp_path / "base_trocado.xlsx"
+    with zipfile.ZipFile(caminho, "w", zipfile.ZIP_DEFLATED) as z:
+        for nome, conteudo in partes.items():
+            z.writestr(nome, conteudo)
+    return caminho
+
+
+def test_cache_bd2_renumerado_pelo_excel(tmp_path):
+    """O Excel pode renumerar as partes de pivot cache ao salvar (caso real de
+    02/09/2026). O motor deve achar o cache da BD2 PELO CONTEÚDO e atualizar
+    o ref na parte certa — sem tocar no cache da BD1."""
+    base = _criar_base(tmp_path)
+    base_trocado = _trocar_caches(tmp_path, base)
+    wpd = _criar_wpd(tmp_path)
+    limpo = _criar_limpo(tmp_path)
+    final = tmp_path / "final_trocado.xlsx"
+
+    ie.processar_fases_2_3_4_hias(str(limpo), str(base_trocado), str(final),
+                                  str(tmp_path), str(tmp_path), str(wpd))
+
+    with zipfile.ZipFile(final) as zf:
+        cache1 = zf.read("xl/pivotCache/pivotCacheDefinition1.xml").decode("utf-8")
+        cache2 = zf.read("xl/pivotCache/pivotCacheDefinition2.xml").decode("utf-8")
+    assert 'name="BD_1"' in cache1            # cache da BD1 permanece intocado
+    assert 'ref="A1:I807"' in cache2          # ref da BD2 atualizado na parte certa
+    assert 'ref="A1:I2"' not in cache2
+
+
+def test_parte_cache_bd2_seleciona_por_conteudo():
+    ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    cache_bd1 = (DECL + f'<pivotCacheDefinition {ns}>'
+                 + '<cacheSource type="worksheet"><worksheetSource name="BD_1"/></cacheSource>'
+                 + '</pivotCacheDefinition>')
+    cache_bd2 = (DECL + f'<pivotCacheDefinition {ns}>'
+                 + '<cacheSource type="worksheet"><worksheetSource ref="A1:I1020" sheet="BD2"/></cacheSource>'
+                 + '</pivotCacheDefinition>')
+    partes = {
+        "xl/pivotCache/pivotCacheDefinition1.xml": cache_bd1,
+        "xl/pivotCache/pivotCacheDefinition2.xml": cache_bd2,
+    }
+    assert ie._parte_cache_bd2(partes) == "xl/pivotCache/pivotCacheDefinition2.xml"
+    so_bd1 = {"xl/pivotCache/pivotCacheDefinition1.xml": cache_bd1}
+    assert ie._parte_cache_bd2(so_bd1) is None
