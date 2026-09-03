@@ -64,7 +64,10 @@ todo deploy acontece pelo push no GitHub.
   e a pasta `/opt/atualizacao-pf/backups` criada.
 - Comando `sqlite3` instalado (usado pelo backup) — **verificação pendente na
   Task 11**.
-- Caddy e DNS `pf.lsm.ia.br` (configuração remota, fora deste repo).
+- Caddy: copiar `infra/Caddyfile` para `/etc/caddy/Caddyfile` e habilitar com
+  `systemctl enable --now caddy` (certificado automático); DNS: registro A `pf` →
+  IP do VPS (registro.br/painel Locaweb). Conferir com
+  `curl -I https://pf.lsm.ia.br`.
 - `infra/setup_base.sh` serve de referência para a instalação base (pacotes,
   usuário `apppf`, firewall, unit systemd).
 
