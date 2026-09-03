@@ -219,6 +219,11 @@ if executar and not st.session_state.em_andamento:
     with st.container(height=450, border=True):
         st.code(log_texto, language=None, line_numbers=False)
 
+    st.download_button("Baixar log da execução",
+                       data=log_texto,
+                       file_name=f"log_execucao_{datetime.now().strftime('%Y%m%d')}.txt",
+                       mime="text/plain")
+
     if sucesso and os.path.exists(xlsx_hias_final):
         with open(xlsx_hias_final, "rb") as f:
             st.download_button("Baixar Posição Financeira atualizada",
@@ -237,6 +242,10 @@ elif st.session_state.ultimo_log:
         st.error("Última execução concluída com erro.")
     with st.container(height=450, border=True):
         st.code(st.session_state.ultimo_log, language=None, line_numbers=False)
+    st.download_button("Baixar log da execução",
+                       data=st.session_state.ultimo_log,
+                       file_name=f"log_execucao_{datetime.now().strftime('%Y%m%d')}.txt",
+                       mime="text/plain")
     st.markdown(f'<div class="app-footer">{VERSAO}</div>', unsafe_allow_html=True)
 
 else:

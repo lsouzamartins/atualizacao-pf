@@ -12,7 +12,7 @@ conn = banco.conectar()
 banco.inicializar_banco(conn)
 
 st.markdown(f"### {icone('circle-check', 20, '#1C5A8A')} Usuários")
-for row in conn.execute("SELECT id, login, nome, admin FROM usuarios ORDER BY login"):
+for row in banco.listar_usuarios(conn):
     papel = "admin" if row["admin"] else "usuário"
     st.write(f"- **{row['login']}** ({row['nome']}) — {papel}")
 
@@ -39,6 +39,34 @@ with st.form("trocar_senha"):
             st.success("Senha trocada.")
         else:
             st.error("Senha atual incorreta ou nova senha curta demais (mín. 8).")
+
+logins = [r["login"] for r in banco.listar_usuarios(conn)]
+
+with st.form("redefinir_senha"):
+    st.markdown("#### Redefinir senha de um usuário")
+    alvo = st.selectbox("Usuário", logins)
+    nova_senha = st.text_input("Nova senha (mín. 8 caracteres)", type="password")
+    if st.form_submit_button("Redefinir"):
+        resultado = banco.redefinir_senha(conn, alvo, nova_senha)
+        if resultado["ok"]:
+            st.success(f"Senha de {alvo} redefinida.")
+        else:
+            st.error(resultado["erro"])
+
+with st.form("remover_usuario"):
+    st.markdown("#### Remover usuário")
+    alvo = st.selectbox("Usuário a remover", logins)
+    confirmar = st.checkbox("Confirmo que quero remover este usuário")
+    if st.form_submit_button("Remover"):
+        if not confirmar:
+            st.warning("Marque a confirmação para remover o usuário.")
+        else:
+            resultado = banco.remover_usuario(
+                conn, alvo, st.session_state["usuario"]["login"])
+            if resultado["ok"]:
+                st.success(f"Usuário {alvo} removido.")
+            else:
+                st.error(resultado["erro"])
 
 st.markdown("#### Backup do banco")
 if st.button("Baixar backup (.db)"):

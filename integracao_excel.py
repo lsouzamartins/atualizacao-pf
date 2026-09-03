@@ -114,6 +114,16 @@ def _numero(valor) -> str | None:
     return str(valor)
 
 
+def _substituir_ou_falhar(padrao, novo, texto, contexto):
+    """Aplica re.sub e falha alto se o padrão não casar — evita gravar saída silenciosamente errada."""
+    resultado, n = re.subn(padrao, novo, texto, count=1)
+    if n == 0:
+        raise RuntimeError(
+            f"Padrão não encontrado em {contexto} — abortando para não gravar uma saída incorreta."
+        )
+    return resultado
+
+
 # ==============================================================================
 # sharedStrings: leitura preservando a ordem dos <si>; acréscimos no fim
 # ==============================================================================
@@ -315,8 +325,9 @@ def _editar_bd1(xml_bd1: str, novas: pd.DataFrame, strings) -> tuple[str, int, i
     idx = xml_bd1.rfind("</sheetData>")
     novo = xml_bd1[:idx] + bloco + xml_bd1[idx:]
     fim_novo = fim + len(novas)
-    novo = re.sub(r'<dimension ref="A1:V(\d+)"/>',
-                  f'<dimension ref="A1:V{fim_novo}"/>', novo, count=1)
+    novo = _substituir_ou_falhar(
+        r'<dimension ref="A1:V(\d+)"/>',
+        f'<dimension ref="A1:V{fim_novo}"/>', novo, "dimension da BD1")
     return novo, fim_novo, refs
 
 
@@ -410,8 +421,9 @@ def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | 
 
     if not mudou:
         return None, None, 0
-    texto = re.sub(r'<dimension ref="A1:J(\d+)"/>',
-                   f'<dimension ref="A1:J{novo_fim}"/>', texto, count=1)
+    texto = _substituir_ou_falhar(
+        r'<dimension ref="A1:J(\d+)"/>',
+        f'<dimension ref="A1:J{novo_fim}"/>', texto, "dimension da BD2")
     return texto, novo_fim, novas_celulas
 
 
@@ -426,8 +438,10 @@ def _ajustar_tabela(xml: str, prefixo: str, novo_fim: int) -> str:
 
 def _ajustar_cache1(xml: str, novo_fim: int) -> str:
     """Atualiza a fonte da pivotCacheDefinition1 (worksheetSource da BD2)."""
-    return re.sub(r'(worksheetSource[^>]*?\bref="A1:I)(\d+)(")',
-                  lambda m: f'{m.group(1)}{novo_fim}{m.group(3)}', xml, count=1)
+    return _substituir_ou_falhar(
+        r'(worksheetSource[^>]*?\bref="A1:I)(\d+)(")',
+        lambda m: f'{m.group(1)}{novo_fim}{m.group(3)}', xml,
+        "worksheetSource do cache1")
 
 
 def _marcar_refresh_on_load(xml: str) -> str:
@@ -442,11 +456,14 @@ def _marcar_refresh_on_load(xml: str) -> str:
 def _ajustar_workbook(xml: str, fim_bd1_novo: int | None, calc_completo: bool) -> str:
     """fullCalcOnLoad (recalcula BD1 ao abrir) e o nome definido _FilterDatabase da BD1."""
     if calc_completo and "fullCalcOnLoad" not in xml:
-        xml = re.sub(r'(<calcPr\b[^>]*?)(/?>)',
-                     r'\1 fullCalcOnLoad="1"\2', xml, count=1)
+        xml = _substituir_ou_falhar(
+            r'(<calcPr\b[^>]*?)(/?>)',
+            r'\1 fullCalcOnLoad="1"\2', xml, "calcPr do workbook")
     if fim_bd1_novo is not None:
-        xml = re.sub(r"(definedName[^>]*>'BD1'!\$A\$1:\$V\$)(\d+)",
-                     lambda m: m.group(1) + str(fim_bd1_novo), xml, count=1)
+        xml = _substituir_ou_falhar(
+            r"(definedName[^>]*>'BD1'!\$A\$1:\$V\$)(\d+)",
+            lambda m: m.group(1) + str(fim_bd1_novo), xml,
+            "definedName do workbook")
     return xml
 
 

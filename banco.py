@@ -85,6 +85,12 @@ def criar_usuario(conn, login, nome, senha, admin=False):
     return cur.lastrowid
 
 
+def listar_usuarios(conn):
+    """Usuários ordenados por login (linhas sqlite3.Row com id, login, nome, admin)."""
+    return conn.execute(
+        "SELECT id, login, nome, admin FROM usuarios ORDER BY login").fetchall()
+
+
 def autenticar(conn, login, senha, agora=None):
     """Autentica e devolve dict do usuário; None se login/senha inválidos."""
     agora = datetime.fromisoformat(agora) if agora else datetime.now()
@@ -127,6 +133,41 @@ def pode_tentar(conn, login, agora=None):
     return True, max(MAX_FALHAS - row["falhas_seguidas"], 1)
 
 
+def redefinir_senha(conn, login_alvo, nova_senha):
+    """Redefine a senha de um usuário (uso administrativo): re-hash bcrypt e
+    zera falhas_seguidas/bloqueado_ate do alvo. Devolve dict de resultado."""
+    if len(nova_senha) < 8:
+        return {"ok": False, "erro": "A senha deve ter no mínimo 8 caracteres."}
+    row = conn.execute("SELECT id FROM usuarios WHERE login=?", (login_alvo,)).fetchone()
+    if row is None:
+        return {"ok": False, "erro": "Usuário não encontrado."}
+    conn.execute(
+        "UPDATE usuarios SET senha_hash=?, falhas_seguidas=0, bloqueado_ate=NULL "
+        "WHERE id=?", (_hash_senha(nova_senha), row["id"]))
+    conn.commit()
+    return {"ok": True}
+
+
+def remover_usuario(conn, login_alvo, login_operador):
+    """Remove um usuário com as guardas da spec 3.4: não remove o próprio
+    admin nem o último administrador. Devolve dict de resultado."""
+    alvo = conn.execute("SELECT * FROM usuarios WHERE login=?", (login_alvo,)).fetchone()
+    if alvo is None:
+        return {"ok": False, "erro": "Usuário não encontrado."}
+    operador = conn.execute("SELECT * FROM usuarios WHERE login=?",
+                            (login_operador,)).fetchone()
+    if login_alvo == login_operador and operador is not None and operador["admin"]:
+        return {"ok": False, "erro": "Você não pode remover o seu próprio usuário."}
+    if alvo["admin"]:
+        total_admins = conn.execute(
+            "SELECT COUNT(*) FROM usuarios WHERE admin=1").fetchone()[0]
+        if total_admins <= 1:
+            return {"ok": False, "erro": "Não é possível remover o último administrador."}
+    conn.execute("DELETE FROM usuarios WHERE id=?", (alvo["id"],))
+    conn.commit()
+    return {"ok": True}
+
+
 def registrar_execucao(conn, usuario, status, mensagem, arquivos):
     cur = conn.execute(
         "INSERT INTO execucoes (usuario, inicio, fim, status, mensagem, arquivos_gerados) "
@@ -156,6 +197,24 @@ def resumos_disponiveis(conn):
         "SELECT DISTINCT data FROM resumos_diarios ORDER BY data DESC")]
 
 
+def convenios_disponiveis(conn):
+    """Convênios distintos já registrados, em ordem alfabética."""
+    return [r["convenio"] for r in conn.execute(
+        "SELECT DISTINCT convenio FROM resumos_diarios ORDER BY convenio")]
+
+
+def arquivos_da_execucao(conn, execucao_id):
+    """Lista de arquivos gravados para uma execução (JSON de arquivos_gerados)."""
+    row = conn.execute(
+        "SELECT arquivos_gerados FROM execucoes WHERE id=?", (execucao_id,)).fetchone()
+    if row is None or not row["arquivos_gerados"]:
+        return []
+    try:
+        return json.loads(row["arquivos_gerados"])
+    except (ValueError, TypeError):
+        return []
+
+
 def resumos_do_dia(conn, data):
     """Valores por convênio da execução MAIS RECENTE do dia informado."""
     ultima = conn.execute(
@@ -171,6 +230,9 @@ def resumos_do_dia(conn, data):
 
 
 def historico(conn, de=None, ate=None, convenio=None):
+    """Linhas de resumos_diarios unidas às execuções, no período [de, ate]
+    (datas no formato 'YYYY-MM-DD'). convenio opcional: filtra por igualdade
+    exata do nome do convênio (SQL parametrizado)."""
     sql = ("SELECT e.id AS execucao_id, e.usuario, e.status, r.data, r.convenio, "
            "r.vlr_bruto, r.vlr_liquido, r.quitado, r.nao_identificado "
            "FROM resumos_diarios r JOIN execucoes e ON e.id = r.execucao_id WHERE 1=1")

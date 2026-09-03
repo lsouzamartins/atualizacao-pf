@@ -1,4 +1,4 @@
-"""Executa a integração UNO em subprocesso isolado (soffice próprio + crash seguro)."""
+"""Executa o editor cirúrgico do .xlsx em subprocesso isolado (crash seguro)."""
 import json, sys, traceback
 
 def main():

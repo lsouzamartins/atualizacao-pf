@@ -210,10 +210,3 @@ def formatar_brl(valor: float) -> str:
     """Formata número como moeda Brasil: 1234567.89 -> '1.234.567,89'."""
     texto = f"{float(valor):,.2f}"
     return texto.replace(",", "X").replace(".", ",").replace("X", ".")
-
-
-def baixar_arquivo(caminho: str, rotulo: str = "Baixar"):
-    nome = os.path.basename(caminho)
-    with open(caminho, "rb") as f:
-        st.download_button(rotulo, data=f.read(), file_name=nome,
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

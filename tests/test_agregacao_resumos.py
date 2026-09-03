@@ -1,6 +1,5 @@
 """Função pura que transforma o df_ni da Fase 1 nos resumos diários do banco."""
 import pandas as pd
-import pytest
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app_pages import processamento

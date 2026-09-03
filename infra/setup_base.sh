@@ -29,6 +29,25 @@ ufw allow OpenSSH && ufw allow 80/tcp && ufw allow 443/tcp && ufw --force enable
 # fail2ban no SSH
 systemctl enable --now fail2ban
 
+# fail2ban no Caddy: jail extra para erros 401/403 do access log
+# (o host remoto do formato common do Caddy vira o <HOST> do fail2ban)
+cat > /etc/fail2ban/filter.d/caddy.conf <<'EOF'
+[Definition]
+failregex = ^<HOST> - \S+ \[[^\]]+\] "[^"]*" (401|403)\b
+ignoreregex =
+EOF
+cat >> /etc/fail2ban/jail.local <<'EOF'
+
+[caddy]
+enabled = true
+backend = auto
+logpath = /var/log/caddy/access.log
+maxretry = 10
+bantime = 3600
+findtime = 600
+EOF
+systemctl reload fail2ban
+
 # Limite de recursos para o Streamlit (protege a RAM do VPS)
 cat > /etc/systemd/system/atualizacao-pf.service <<'EOF'
 [Unit]

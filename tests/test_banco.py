@@ -1,4 +1,3 @@
-import os, sqlite3
 import pytest
 import pandas as pd
 import banco
@@ -67,5 +66,31 @@ def test_criar_usuario_rejeita_login_ou_nome_vazio(tmp_path):
         banco.criar_usuario(conn, "   ", "Leo", "senha12345")
     with pytest.raises(ValueError):
         banco.criar_usuario(conn, "leo", "  ", "senha12345")
+    conn.close()
+
+def test_historico_filtra_por_convenio(tmp_path):
+    db = str(tmp_path / "pf.db")
+    conn = banco.conectar(db); banco.inicializar_banco(conn)
+    eid1 = banco.registrar_execucao(conn, "leo", "sucesso", "", ["a.xlsx"])
+    eid2 = banco.registrar_execucao(conn, "ana", "sucesso", "", ["b.xlsx"])
+    df1 = pd.DataFrame({
+        "data": ["2026-09-01"], "convenio": ["BRADESCO"],
+        "vlr_bruto": [100.0], "vlr_liquido": [90.0],
+        "quitado": [0.0], "nao_identificado": [10.0],
+    })
+    df2 = pd.DataFrame({
+        "data": ["2026-09-02"], "convenio": ["GEAP"],
+        "vlr_bruto": [200.0], "vlr_liquido": [180.0],
+        "quitado": [0.0], "nao_identificado": [20.0],
+    })
+    banco.gravar_resumos(conn, eid1, df1)
+    banco.gravar_resumos(conn, eid2, df2)
+    tudo = banco.historico(conn)
+    assert sorted(tudo["convenio"].unique()) == ["BRADESCO", "GEAP"]
+    so_bradesco = banco.historico(conn, convenio="BRADESCO")
+    assert set(so_bradesco["convenio"].unique()) == {"BRADESCO"}
+    assert banco.convenios_disponiveis(conn) == ["BRADESCO", "GEAP"]
+    assert banco.arquivos_da_execucao(conn, eid1) == ["a.xlsx"]
+    assert banco.arquivos_da_execucao(conn, 999) == []
     conn.close()
 

@@ -376,7 +376,8 @@ def processar_fases_2_3_4_hias(
         pasta_saida: str,
         xlsx_wpd_limpo: str,
 ):
-    """Executa a integração Excel em subprocesso (LibreOffice UNO)."""
+    """Executa a integração Excel em subprocesso isolado — editor cirúrgico do
+    .xlsx (integração por XML) com crash seguro."""
     payload = json.dumps({
         "limpo": xlsx_nao_identificado_limpo, "base": xlsx_hias_base,
         "final": xlsx_hias_final, "raiz": pasta_raiz,

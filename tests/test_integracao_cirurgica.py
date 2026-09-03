@@ -213,12 +213,33 @@ def test_ajustar_tabela_atualiza_refs():
 
 
 # ==============================================================================
+# Helper _substituir_ou_falhar (M7): falha alta em substituição sem casamento
+# ==============================================================================
+def test_substituir_ou_falhar_sem_casamento_levanta():
+    with pytest.raises(RuntimeError, match="Padrão não encontrado em dimension da BD2"):
+        ie._substituir_ou_falhar(r'<dimension ref="A1:J\d+"/>',
+                                 '<dimension ref="A1:J9"/>',
+                                 "<worksheet><sheetData/></worksheet>",
+                                 "dimension da BD2")
+
+
+def test_substituir_ou_falhar_com_casamento_substitui():
+    xml = '<dimension ref="A1:J2"/>'
+    saida = ie._substituir_ou_falhar(
+        r'<dimension ref="A1:J(\d+)"/>',
+        lambda m: f'<dimension ref="A1:J{int(m.group(1)) + 1}"/>',
+        xml, "dimension da BD2")
+    assert saida == '<dimension ref="A1:J3"/>'
+
+
+# ==============================================================================
 # Integração completa (fixture sintética escrita à mão)
 # ==============================================================================
-def _criar_base(tmp_path):
+def _criar_base(tmp_path, sem_dimension_bd2=False):
     """Hias sintético mínimo com a anatomia do real: BD1/BD2 + sharedStrings +
     tabelas + calcPr sem fullCalcOnLoad. Escrito à mão porque o openpyxl
-    3.1.5 usa strings inline (o motor exige sharedStrings)."""
+    3.1.5 usa strings inline (o motor exige sharedStrings).
+    sem_dimension_bd2=True gera uma BD2 sem <dimension> (fixture de falha)."""
     ser_ago = (date(2026, 8, 31) - ie.SERIAL_EPOCA).days
     ser_set = (date(2026, 9, 30) - ie.SERIAL_EPOCA).days
 
@@ -265,7 +286,8 @@ def _criar_base(tmp_path):
               + '<row r="1"><c r="A1" t="s"><v>24</v></c></row></sheetData></worksheet>')
     sheet5 = (DECL + f'<worksheet {ns}><dimension ref="A1:V2"/><sheetData>'
               + f'<row r="1">{cel_bd1_header}</row>{row2_bd1}</sheetData></worksheet>')
-    sheet6 = (DECL + f'<worksheet {ns}><dimension ref="A1:J2"/><sheetData>'
+    dimension_bd2 = '<dimension ref="A1:J2"/>' if not sem_dimension_bd2 else ""
+    sheet6 = (DECL + f'<worksheet {ns}>{dimension_bd2}<sheetData>'
               + f'<row r="1">{cel_bd2_header}</row>{row2_bd2}</sheetData></worksheet>')
 
     def tabela(id_, nome, ref, colunas):
@@ -490,6 +512,19 @@ def test_processamento_completo(tmp_path):
             assert 'refreshOnLoad="1"' in zf.read(parte).decode("utf-8")
         cache1_final = zf.read("xl/pivotCache/pivotCacheDefinition1.xml").decode("utf-8")
         assert 'ref="A1:I807"' in cache1_final and 'ref="A1:I2"' not in cache1_final
+
+
+def test_processamento_aborta_se_dimension_bd2_faltar(tmp_path):
+    """BD2 sem <dimension> não pode ter a dimension reescrita — o motor deve
+    abortar (RuntimeError) em vez de gravar uma saída silenciosamente errada."""
+    base = _criar_base(tmp_path, sem_dimension_bd2=True)
+    wpd = _criar_wpd(tmp_path)
+    limpo = _criar_limpo(tmp_path)
+    final = tmp_path / "final.xlsx"
+
+    with pytest.raises(RuntimeError, match="dimension da BD2"):
+        ie.processar_fases_2_3_4_hias(str(limpo), str(base), str(final),
+                                      str(tmp_path), str(tmp_path), str(wpd))
 
 
 def test_limpo_none_integra_so_bd1(tmp_path):
