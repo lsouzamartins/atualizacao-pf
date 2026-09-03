@@ -18,8 +18,10 @@ import zipfile
 
 import openpyxl
 
-# Prefixos cujos bytes diferem LEGITIMAMENTE entre COM e cirúrgico:
-# pivotTable* (refreshOnLoad do cirúrgico) e pivotCache* (Excel recalcula ao salvar).
+# Substrings cujos bytes diferem LEGITIMAMENTE entre COM e cirúrgico:
+# pivotTable (refreshOnLoad do cirúrgico) e pivotCache (Excel recalcula ao salvar).
+# A checagem é por SUBSTRING: nomes reais de partes começam com "xl/",
+# então startswith nunca casaria.
 PREFIXOS_FORA = ("pivotTable", "pivotCache")
 
 
@@ -89,7 +91,7 @@ def main():
     pa, pb = _partes_internas(a), _partes_internas(b)
     print("pivot/tabela parts COM:", sorted(pa), "| cirúrgico:", sorted(pb))
     so_preservadas = [n for n in pa if n in pb
-                      and not n.startswith(PREFIXOS_FORA)
+                      and not any(p in n for p in PREFIXOS_FORA)
                       and pa[n] != pb[n]]
     print("  partes com bytes diferentes (fora das editadas por design):", so_preservadas)
     ok = (n_dif == 0 and difs_fmt == 0

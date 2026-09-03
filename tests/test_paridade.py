@@ -5,6 +5,7 @@ são suficientes (o Hias real nunca é tocado aqui — regra global: só leitura
 """
 import subprocess
 import sys
+import zipfile
 
 from openpyxl import Workbook
 
@@ -27,6 +28,17 @@ def _criar(tmp_path, nome, abas, formato_bd2=None):
 def _rodar(a, b):
     return subprocess.run([sys.executable, "tests/paridade/comparar_versoes.py",
                            str(a), str(b)], capture_output=True, text=True)
+
+
+def _injetar_partes(caminho, partes):
+    """Acrescenta partes internas ao .xlsx (openpyxl não cria pivôs)."""
+    tmp = caminho.with_suffix(".tmp.xlsx")
+    with zipfile.ZipFile(caminho) as zin, zipfile.ZipFile(tmp, "w") as zout:
+        for item in zin.infolist():
+            zout.writestr(item, zin.read(item.filename))
+        for nome, conteudo in partes.items():
+            zout.writestr(nome, conteudo)
+    tmp.replace(caminho)
 
 
 def test_arquivos_identicos(tmp_path):
@@ -86,3 +98,25 @@ def test_sem_bd2_nao_crasha(tmp_path):
     proc = _rodar(a, b)
     assert proc.returncode == 0
     assert "RESULTADO:" in proc.stdout
+
+
+def test_bytes_de_pivots_divergentes_nao_entram_no_veredito(tmp_path):
+    # refreshOnLoad do cirúrgico e recálculo do Excel divergem por design
+    abas = {"BD1": [[1, "a"]], "BD2": [[3.0, "c"]]}
+    a = _criar(tmp_path, "com.xlsx", abas)
+    b = _criar(tmp_path, "cirurgico.xlsx", abas)
+    _injetar_partes(a, {"xl/pivotTables/pivotTable1.xml": "<a/>"})
+    _injetar_partes(b, {"xl/pivotTables/pivotTable1.xml": '<b refreshOnLoad="1"/>'})
+    proc = _rodar(a, b)
+    assert "RESULTADO: OK — idêntico" in proc.stdout
+
+
+def test_bytes_de_slicer_divergentes_entram_no_veredito(tmp_path):
+    # slicers são preservados byte a byte pelo cirúrgico — divergência é real
+    abas = {"BD1": [[1, "a"]], "BD2": [[3.0, "c"]]}
+    a = _criar(tmp_path, "com.xlsx", abas)
+    b = _criar(tmp_path, "cirurgico.xlsx", abas)
+    _injetar_partes(a, {"xl/slicers/slicer1.xml": "<a/>"})
+    _injetar_partes(b, {"xl/slicers/slicer1.xml": "<b/>"})
+    proc = _rodar(a, b)
+    assert "RESULTADO: REVISAR diferenças" in proc.stdout
