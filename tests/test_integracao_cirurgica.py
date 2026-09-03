@@ -281,6 +281,22 @@ def _criar_base(tmp_path):
     # no arquivo real a tabela da BD2 cobre só A1:I (a coluna J/FLAG fica fora)
     table2 = tabela(2, "Tabela1", "A1:I2", cabecalho_bd2[:9])
 
+    # pivôs sintéticas: raiz SEM refreshOnLoad (o motor deve marcá-lo no fluxo);
+    # cacheIds conforme a investigação: pivôs 1–3 = 3, pivô 4 = 2
+    pivots = []
+    for num, cache_id in ((1, 3), (2, 3), (3, 3), (4, 2)):
+        pivots.append((f"xl/pivotTables/pivotTable{num}.xml",
+                       DECL + f'<pivotTableDefinition {ns} name="Tabela dinâmica{num}" '
+                       + f'cacheId="{cache_id}" applyNumberFormats="0">'
+                       + '<location ref="A1:B5" firstHeaderRow="1"/>'
+                       + '</pivotTableDefinition>'))
+    cache1 = (DECL
+              + f'<pivotCacheDefinition {ns}>'
+              + '<cacheSource type="worksheet"><worksheetSource ref="A1:I2" sheet="BD2"/></cacheSource>'
+              + '</pivotCacheDefinition>')
+    slicer1 = ('<slicer xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" '
+               'name="SegmentaçãoDeDados1"><preservar>BYTES</preservar></slicer>')
+
     workbook = (DECL
                 + f'<workbook {ns} xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
                 + '<calcPr calcId="191029"/>'
@@ -330,6 +346,12 @@ def _criar_base(tmp_path):
                      + '<Override PartName="/xl/tables/table1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/>'
                      + '<Override PartName="/xl/tables/table2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/>'
                      + '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
+                     + '<Override PartName="/xl/pivotTables/pivotTable1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml"/>'
+                     + '<Override PartName="/xl/pivotTables/pivotTable2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml"/>'
+                     + '<Override PartName="/xl/pivotTables/pivotTable3.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml"/>'
+                     + '<Override PartName="/xl/pivotTables/pivotTable4.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml"/>'
+                     + '<Override PartName="/xl/pivotCache/pivotCacheDefinition1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml"/>'
+                     + '<Override PartName="/xl/slicers/slicer1.xml" ContentType="application/vnd.ms-excel.slicer+xml"/>'
                      + '</Types>')
 
     rels_raiz = (DECL
@@ -363,6 +385,9 @@ def _criar_base(tmp_path):
         "xl/worksheets/sheet6.xml": sheet6,
         "xl/tables/table1.xml": table1,
         "xl/tables/table2.xml": table2,
+        **dict(pivots),
+        "xl/pivotCache/pivotCacheDefinition1.xml": cache1,
+        "xl/slicers/slicer1.xml": slicer1,
         "customXml/item1.xml": "<preservar>BYTES</preservar>",
     }
     with zipfile.ZipFile(caminho, "w", zipfile.ZIP_DEFLATED) as z:
@@ -457,6 +482,14 @@ def test_processamento_completo(tmp_path):
                 in sheet5_final)
         assert ('<c r="V4" s="43" t="str"><f>=IF(RIGHT(A4,3)="(R)","Recurso","Comum")</f><v>Recurso</v></c>'
                 in sheet5_final)
+        assert set(zf.namelist()) == set(zb.namelist())   # nenhuma parte criada/removida
+        assert zb.read("xl/slicers/slicer1.xml") == zf.read("xl/slicers/slicer1.xml")
+        for i in range(1, 5):
+            parte = f"xl/pivotTables/pivotTable{i}.xml"
+            assert "refreshOnLoad" not in zb.read(parte).decode("utf-8")
+            assert 'refreshOnLoad="1"' in zf.read(parte).decode("utf-8")
+        cache1_final = zf.read("xl/pivotCache/pivotCacheDefinition1.xml").decode("utf-8")
+        assert 'ref="A1:I807"' in cache1_final and 'ref="A1:I2"' not in cache1_final
 
 
 def test_limpo_none_integra_so_bd1(tmp_path):
@@ -476,6 +509,12 @@ def test_limpo_none_integra_so_bd1(tmp_path):
     assert len(linhas2) == 2
     assert linhas2[1][0] == "Convênio Z "
     # tabelas da BD2 sem alteração; a da BD1 cresceu
-    with zipfile.ZipFile(final) as zf:
+    with zipfile.ZipFile(base) as zb, zipfile.ZipFile(final) as zf:
+        assert zb.read("xl/slicers/slicer1.xml") == zf.read("xl/slicers/slicer1.xml")
+        for i in range(1, 5):
+            parte = f"xl/pivotTables/pivotTable{i}.xml"
+            assert 'refreshOnLoad="1"' in zf.read(parte).decode("utf-8")
+        cache1 = zf.read("xl/pivotCache/pivotCacheDefinition1.xml").decode("utf-8")
+        assert 'ref="A1:I2"' in cache1  # BD2 intocada → cache1 permanece no ref original
         assert 'ref="A1:I2"' in zf.read("xl/tables/table2.xml").decode("utf-8")
         assert 'ref="A1:V4"' in zf.read("xl/tables/table1.xml").decode("utf-8")

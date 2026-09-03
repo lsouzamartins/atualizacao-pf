@@ -88,12 +88,12 @@ def _escapar_xml(texto: str) -> str:
 
 def _celula(ref: str, estilo: int, valor=None, tipo: str | None = None) -> str:
     """Uma <c> de string compartilhada (tipo="s"), inline (tipo="str") ou numérica."""
+    if valor is None:
+        return f'<c r="{ref}" s="{estilo}"/>'
     if tipo == "s":
         return f'<c r="{ref}" s="{estilo}" t="s"><v>{valor}</v></c>'
     if tipo == "str":
         return f'<c r="{ref}" s="{estilo}" t="str"><v>{_escapar_xml(str(valor))}</v></c>'
-    if valor is None:
-        return f'<c r="{ref}" s="{estilo}"/>'
     return f'<c r="{ref}" s="{estilo}"><v>{_escapar_xml(str(valor))}</v></c>'
 
 
@@ -156,6 +156,10 @@ class _StringsCompartilhadas:
 # Lógica herdada do core.py (verbatim — ver "G:\Atualização PF\core.py")
 # ==============================================================================
 def _normalizar_remessa(valor) -> str:
+    """
+    Normaliza a remessa para comparação: o Excel COM devolve números como
+    117129.0, o WPD os traz como '117129' — ambos viram '117129'.
+    """
     if isinstance(valor, float):
         return str(int(valor)) if valor.is_integer() else str(valor)
     if isinstance(valor, int):
@@ -164,6 +168,10 @@ def _normalizar_remessa(valor) -> str:
 
 
 def identificar_linhas_novas_bd1(df_wpd: pd.DataFrame, remessas_existentes: set) -> pd.DataFrame:
+    """
+    Retorna as linhas do WPD cuja Remessa ainda não existe na BD1,
+    ordenadas por Emissão (para anexar ao fim mantendo a ordem histórica).
+    """
     df = df_wpd.copy()
     df["Remessa"] = df["Remessa"].map(_normalizar_remessa)
     novas = df[~df["Remessa"].isin(remessas_existentes)].copy()
