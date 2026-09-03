@@ -4,10 +4,10 @@
 
 ## O que foi feito
 
-- Arquivo real `Posição Financeira Hias.xlsx` (6.240.678 bytes, pen drive) copiado para o VPS em `/home/apppf/spike/` via SFTP/paramiko — **nunca no git** (R22).
+- Arquivo real `Posição Financeira Hias.xlsx` (6.240.678 bytes, pen drive) copiado para o VPS em `/home/apppf/spike/` via SFTP/paramiko — **nunca no git** (R18).
 - `spike/spike_roundtrip.py` (verbatim do brief): sobe um soffice headless dedicado (UserInstallation `/tmp/lo_spike`, socket 127.0.0.1:2002), abre o Hias real e salva como xlsx com `FilterName = "Calc MS Excel 2007 XML"`.
-- Executado no VPS com o python3 do sistema (3.12.3), como usuário `apppf` (R24).
-- openpyxl instalado no python3 do sistema para a comparação (R23): `pip3 install openpyxl` falhou por PEP 668 → `pip3 install --break-system-packages openpyxl` → openpyxl 3.1.5. Ferramenta de spike; não é dependência do app.
+- Executado no VPS com o python3 do sistema (3.12.3), como usuário `apppf`.
+- openpyxl instalado no python3 do sistema para a comparação (habilitador do Step 3 — sem ruling; a registrar para a revisão final): `pip3 install openpyxl` falhou por PEP 668 → `pip3 install --break-system-packages openpyxl` → openpyxl 3.1.5. Ferramenta de spike; não é dependência do app.
 
 ## Resultados reais
 
@@ -49,7 +49,7 @@ Camp calculado    | linhas: 21    -> 21   | células com dif: 0    | primeira: N
 
 ## Interpretação (fatos registrados)
 
-1. **Slicers PERDIDOS.** Os 7 `slicerCaches` e 4 `slicers` do original não existem na saída — o LibreOffice 24.2 não suporta slicers e os descarta ao salvar xlsx. É a mesma destruição que a Global Constraint proíbe no openpyxl; o LO desta versão faz o mesmo. (Suporte a slicers no Calc só foi introduzido no LibreOffice 25.2.)
+1. **Slicers PERDIDOS.** Os 7 `slicerCaches` e 4 `slicers` do original não existem na saída — o LibreOffice 24.2 não suporta slicers e os descarta ao salvar xlsx. É a mesma destruição que a Global Constraint proíbe no openpyxl; o LO desta versão faz o mesmo. (Hipótese NÃO verificada em release notes: o suporte a slicers no Calc teria chegado só no 25.2 — os dois testes empíricos negativos bastam para a decisão.)
 2. **Pivôs re-renderizados e encolhidos.** As abas de pivô caíram de 20.205/3.169/3.169 linhas para 49 — o LO re-renderizou os pivôs e a maior parte do resultado cacheado pelo Excel desapareceu da saída.
 3. **Fórmulas recalculadas na BD1.** 3.785 células com dif, todas de valores cacheados de fórmula levemente diferentes (ex.: `5.3922001471670296` → `5.39220014716703`) — o LO recalcula e grava resultados distintos dos cacheados pelo Excel.
 4. **pivotCache* preservados.** A lista de partes `pivotCache*` é idêntica na saída (mesmos 6 nomes).
@@ -71,8 +71,8 @@ Os Steps 4–5 (`spike/spike_uno_ops.py`) **não foram executados**: o portão d
 ## Decisão do spike
 
 - **Engine = UNO com LibreOffice 24.2.7.2 e 26.2.5.2: REPROVADO nas duas.** O round-trip viola a Global Constraint (slicers destruídos) e altera valores cacheados de pivôs e fórmulas — exatamente o que a integração não pode fazer. Subir a versão dentro da mesma família (26.2) não mudou NADA: mesmas 5 abas com dif e mesmos slicers perdidos.
-- Caminho restante: **LibreOffice 26.8.0** (o suporte a slicers no Calc chegou no 25.2, mas o 26.2 ainda perde os slicers deste arquivo — o 26.8 pode se comportar diferente; sem garantia).
-- Revisão do plano pendente com o controlador/usuário (fallbacks já previstos no plano: container Windows pago, abas de pivô estáticas — decisão do controlador).
+- Caminho restante: **LibreOffice 26.8.0** (hipótese não verificada em release notes: o suporte a slicers teria chegado no 25.2 — empiricamente o 26.2.5 ainda perde os slicers deste arquivo; o 26.8 pode se comportar diferente; sem garantia).
+- Revisão do plano pendente com o controlador/usuário (R24; fallbacks já previstos no plano: container Windows pago, abas de pivô estáticas — decisão do controlador).
 
 ## Fase 2 — LibreOffice 26.2.5.2 (Fresh, via PPA oficial)
 
@@ -89,8 +89,8 @@ DIF valores na aba Data Recebimento
 DIF valores na aba À Quitar
 DIF valores na aba BD1
 abas iguais: ['Data Entrega', 'Data Vencimento', 'Data Recebimento', 'À Quitar', 'BD1', 'BD2', 'Camp calculado'] | abas com dif: 5
-pivotCacheParts: [mesmas 6 partes do original] -> [mesmas 6 partes na saída]
-slicers: ['xl/slicerCaches/slicerCache1..7.xml', 'xl/slicers/slicer1..4.xml'] -> []
+pivotCacheParts: ['xl/pivotCache/pivotCacheRecords1.xml', 'xl/pivotCache/pivotCacheDefinition2.xml', 'xl/pivotCache/pivotCacheRecords2.xml', 'xl/pivotCache/_rels/pivotCacheDefinition1.xml.rels', 'xl/pivotCache/_rels/pivotCacheDefinition2.xml.rels', 'xl/pivotCache/pivotCacheDefinition1.xml'] -> [mesmos 6 nomes na saída]
+slicers: ['xl/slicerCaches/slicerCache5.xml', 'xl/slicerCaches/slicerCache1.xml', 'xl/slicerCaches/slicerCache2.xml', 'xl/slicerCaches/slicerCache3.xml', 'xl/slicerCaches/slicerCache4.xml', 'xl/slicerCaches/slicerCache6.xml', 'xl/slicerCaches/slicerCache7.xml', 'xl/slicers/slicer1.xml', 'xl/slicers/slicer2.xml', 'xl/slicers/slicer3.xml', 'xl/slicers/slicer4.xml'] -> []
 ```
 
 Diagnóstico read-only:

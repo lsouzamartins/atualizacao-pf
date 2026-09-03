@@ -2,7 +2,7 @@
 - IP: 177.153.35.245
 - SSH: root + usuário apppf
 - Senha root: senha fornecida ao controlador — será rotacionada ao final do projeto
-- Ubuntu 24.04, LibreOffice 24.2.7.2, python3-uno OK
+- Ubuntu 24.04, LibreOffice 26.2.5.2 (PPA libreoffice/ppa — instalado pessoalmente pelo usuário via PuTTY em 02/09/2026), python3-uno OK
 - UFW ativo: 22 (OpenSSH), 80/tcp e 443/tcp liberados
 - fail2ban habilitado (enabled)
 - Unit systemd criada em /etc/systemd/system/atualizacao-pf.service (ainda não habilitada/iniciada — deploy em task posterior)
