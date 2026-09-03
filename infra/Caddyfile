@@ -1,0 +1,4 @@
+pf.lsm.ia.br {
+    reverse_proxy 127.0.0.1:8501
+    encode gzip
+}
