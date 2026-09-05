@@ -65,7 +65,7 @@ def test_linha_bd2_estilos_e_referencias():
                           [1.5, 2.0, None, 1000, 0.0, 0.0, 0.0], s)
     assert '<row r="806">' in linha
     assert '<c r="A806" s="34" t="s"><v>0</v></c>' in linha
-    assert '<c r="B806" s="35"><v>45001</v></c>' in linha
+    assert '<c r="B806" s="16"><v>45001</v></c>' in linha
     assert '<c r="C806" s="53"><v>1.5</v></c>' in linha
     assert '<c r="D806" s="53"><v>2</v></c>' in linha
     assert '<c r="E806" s="53"/>' in linha
@@ -130,29 +130,33 @@ XML_BD2_MINI = (
 )
 
 
-def test_editar_bd2_deleta_obsoletas_normaliza_e_insere():
+def test_editar_bd2_preserva_base_deduplica_e_insere():
     s = ie._StringsCompartilhadas(_sst(["CABEÇALHO", "Convênio ", "OBJETO"]))
-    xml, fim, novas_celulas, mapeamento, n_obsoletas = ie._editar_bd2(
+    xml, fim, novas_celulas, mapeamento, novas = ie._editar_bd2(
         XML_BD2_MINI,
         [{"convenio": "Convênio", "data": 45001,
-          "valores": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]}],
+          "valores": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]},
+         # chave já existente (Convênio + serial 45000 da linha 2) — é pulada
+         {"convenio": "Convênio", "data": 45000,
+          "valores": [9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0]}],
         s)
-    assert fim == 806
+    assert fim == 809
     assert novas_celulas == 1
-    assert n_obsoletas == 2
+    assert len(novas) == 1
+    assert novas[0]["convenio"] == "Convênio" and novas[0]["data"] == 45001
     assert mapeamento == {"Convênio ": "Convênio"}
-    # obsoletas removidas
-    assert '<c r="A806" s="5"' not in xml
-    assert '<c r="A808"' not in xml
+    # todas as linhas da base preservadas
+    assert '<c r="A806" s="5"' in xml
+    assert '<c r="A808"' in xml
     # coluna A normalizada: "Convênio " -> "Convênio" (si novo = índice 3)
     assert '<c r="A2" s="34" t="s"><v>3</v></c>' in xml
     assert '<c r="A805" s="34" t="s"><v>3</v></c>' in xml
-    # bloco novo usa o mesmo si e começa na linha 806
-    assert '<c r="A806" s="34" t="s"><v>3</v></c>' in xml
-    assert '<c r="B806" s="35"><v>45001</v></c>' in xml
-    assert '<c r="J806" s="17"><v>1</v></c>' in xml
+    # linha nova começa em 809 (fim atual + 1), com a data em estilo mm-dd-yy
+    assert '<c r="A809" s="34" t="s"><v>3</v></c>' in xml
+    assert '<c r="B809" s="16"><v>45001</v></c>' in xml
+    assert '<c r="J809" s="17"><v>1</v></c>' in xml
     # dimension
-    assert 'ref="A1:J806"' in xml
+    assert 'ref="A1:J809"' in xml
     assert 'ref="A1:J808"' not in xml
 
 
@@ -166,9 +170,9 @@ def test_editar_bd2_sem_mudanca_devolve_none():
                  + '</sheetData>'
                  + '</worksheet>')
     s = ie._StringsCompartilhadas(_sst(["CABEÇALHO", "Convênio"]))
-    xml, fim, n, mapeamento, n_obsoletas = ie._editar_bd2(xml_limpo, None, s)
+    xml, fim, n, mapeamento, novas = ie._editar_bd2(xml_limpo, None, s)
     assert xml is None and fim is None and n == 0
-    assert mapeamento == {} and n_obsoletas == 0
+    assert mapeamento == {} and novas == []
 
 
 # ==============================================================================
@@ -624,16 +628,17 @@ def test_processamento_completo(tmp_path):
     assert len(linhas1) == 4
     assert linhas1[2][0] == 200001
     assert linhas1[3][0] == "200002 (R)"
-    # BD2: linha antiga normalizada + bloco novo em 806/807
+    # BD2: linha antiga preservada e normalizada + só as linhas novas do
+    # bloco anexadas no fim (dedupe-append — a base nunca é substituída)
     bd2 = wb["BD2"]
     linhas2 = list(bd2.iter_rows(values_only=True))
-    assert len(linhas2) == 807
+    assert len(linhas2) == 4
     assert linhas2[1][0] == "Convênio Z"
-    assert linhas2[805][0] == "Convênio Novo"
-    assert linhas2[805][1] == (date(2026, 9, 1) - ie.SERIAL_EPOCA).days
-    assert linhas2[805][9] == 1            # J=1
-    assert linhas2[806][0] == "Convênio Novo 2"
-    assert linhas2[806][9] == 1
+    assert linhas2[2][0] == "Convênio Novo"
+    assert linhas2[2][1] == (date(2026, 9, 1) - ie.SERIAL_EPOCA).days
+    assert linhas2[2][9] == 1            # J=1
+    assert linhas2[3][0] == "Convênio Novo 2"
+    assert linhas2[3][9] == 1
 
     inicio, fim = ie._janela_entrega()
     with zipfile.ZipFile(base) as zb, zipfile.ZipFile(final) as zf:
@@ -642,7 +647,7 @@ def test_processamento_completo(tmp_path):
         assert zb.read("customXml/item1.xml") == zf.read("customXml/item1.xml")
         assert zb.read("xl/slicers/slicer1.xml") == zf.read("xl/slicers/slicer1.xml")
         assert 'ref="A1:V4"' in zf.read("xl/tables/table1.xml").decode("utf-8")
-        assert 'ref="A1:I807"' in zf.read("xl/tables/table2.xml").decode("utf-8")
+        assert 'ref="A1:I4"' in zf.read("xl/tables/table2.xml").decode("utf-8")
         assert 'fullCalcOnLoad="1"' in zf.read("xl/workbook.xml").decode("utf-8")
         assert "'BD1'!$A$1:$V$4" in zf.read("xl/workbook.xml").decode("utf-8")
         assert 'A1:V4' in zf.read("xl/worksheets/sheet5.xml").decode("utf-8")
@@ -667,9 +672,9 @@ def test_processamento_completo(tmp_path):
         assert '<n v="200001"/>' in def2 and '<s v="200002 (R)"/>' in def2
         assert '<s v="OUTRO CONVÊNIO"/>' in def2 and '<s v="TERCEIRO"/>' in def2
         assert rec2.count("<r>") == 3 and 'count="3"' in rec2
-        # BD2: 1 história + 2 do bloco; convênio renormalizado no cache
+        # BD2: 1 história + 2 novas; convênio renormalizado no cache
         assert 'recordCount="3"' in def1
-        assert 'ref="A1:I807"' in def1 and 'ref="A1:I2"' not in def1
+        assert 'ref="A1:I4"' in def1 and 'ref="A1:I2"' not in def1
         assert '<s v="Convênio Z"/>' in def1 and '<s v="Convênio Z "/>' not in def1
         assert '<s v="Convênio Novo"/>' in def1 and '<s v="Convênio Novo 2"/>' in def1
         assert rec1.count("<r>") == 3 and 'count="3"' in rec1
@@ -813,7 +818,7 @@ def test_cache_bd2_renumerado_pelo_excel(tmp_path):
     assert 'name="BD_1"' in cache1            # cache da BD1 na parte renumerada
     assert 'recordCount="3"' in cache1        # ... e regenerado com as novas
     assert rec1.count("<r>") == 3
-    assert 'ref="A1:I807"' in cache2          # ref da BD2 atualizado na parte certa
+    assert 'ref="A1:I4"' in cache2            # ref da BD2 atualizado na parte certa
     assert 'ref="A1:I2"' not in cache2
     assert 'recordCount="3"' in cache2        # BD2: 1 história + 2 do bloco
     assert rec2.count("<r>") == 3

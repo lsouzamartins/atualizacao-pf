@@ -34,7 +34,6 @@ import pivot_cache as pc
 # ------------------------------------------------------------------------------
 # Constantes da anatomia do arquivo Hias (task-4-investigacao.md)
 # ------------------------------------------------------------------------------
-LINHA_CORTE_BD2 = 806          # linhas >= 806 da BD2 são o bloco obsoleto
 SERIAL_EPOCA = date(1899, 12, 30)  # serial do Excel = dias desde 1899-12-30
 _DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
 _NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -375,46 +374,64 @@ def _bloco_bd2(xlsx_limpo: str) -> list[dict] | None:
 
 def _linha_bd2(num_linha: int, convenio: str, data_serial: int,
                valores: list, strings) -> str:
-    """Uma <row> da BD2: A string s=34, B data s=35, C–I números s=53, J =1 s=17
-    (J=1 mantém a formatação condicional $J2=1/$J2=2 — recomendação da investigação)."""
+    """Uma <row> da BD2: A string s=34, B data s=16 (mm-dd-yy, igual às linhas
+    existentes), C–I números s=53, J =1 s=17 (J=1 mantém a formatação
+    condicional $J2=1/$J2=2 — recomendação da investigação)."""
     cels = [_celula(f"A{num_linha}", 34, str(strings.obter_indice(convenio)), tipo="s"),
-            _celula(f"B{num_linha}", 35, str(data_serial))]
+            _celula(f"B{num_linha}", 16, str(data_serial))]
     for i, v in enumerate(valores):  # C..I
         cels.append(_celula(f"{chr(ord('C') + i)}{num_linha}", 53, _numero(v)))
     cels.append(_celula(f"J{num_linha}", 17, "1"))
     return f'<row r="{num_linha}">{"".join(cels)}</row>'
 
 
-def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | None, int | None, int, dict, int]:
-    """(1) deleta as linhas >= 806 (bloco obsoleto); (2) normaliza a coluna A
-    (tira o preenchimento de espaços, sincronizando sharedStrings); (3) anexa o
-    bloco novo a partir da linha 806; (4) atualiza a dimension.
+def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | None, int | None, int, dict, list]:
+    """(1) normaliza a coluna A (tira o preenchimento de espaços,
+    sincronizando sharedStrings); (2) anexa APENAS as linhas do bloco cuja
+    chave (Convênio, Data) ainda não existe na planilha — as linhas da base
+    são preservadas integralmente (a BD2 é o histórico curado pelo usuário,
+    nunca regenerado do WPD); (3) atualiza a dimension.
     Retorna (xml_novo, fim_novo, células t="s" novas, mapeamento da
-    normalização, nº de linhas obsoletas removidas) ou (None, None, 0, {}, 0).
+    normalização, linhas novas do bloco) ou (None, None, 0, {}, []).
     O mapeamento {original: limpo} permite à FASE 3c renormalizar o cache
-    embutido da BD2 no lugar; o nº de obsoletas é o drop exato dos records
-    obsoletos do cache (equivalente, no arquivo real, a n_registros − história
-    com história = min(fim, LINHA_CORTE_BD2 − 1) − 1)."""
+    embutido da BD2 no lugar; as linhas novas alimentam os records novos do
+    cache (mesma ordem das linhas da planilha)."""
     fim_atual = _ultima_linha(xml_bd2)
-    fim_util = min(fim_atual, LINHA_CORTE_BD2 - 1)
     mudou = False
     mapeamento = {}
-    n_obsoletas = 0
 
-    def _remover_obsoletas(m):
-        nonlocal mudou, n_obsoletas
-        if int(m.group(1)) >= LINHA_CORTE_BD2:
-            mudou = True
-            n_obsoletas += 1
-            return ""
-        return m.group(0)
+    # chaves já presentes: (Convênio sem padding, serial da data em B)
+    existentes = set()
+    for m in re.finditer(r'<row r="(\d+)"[^>]*>(.*?)</row>', xml_bd2, flags=re.DOTALL):
+        num = int(m.group(1))
+        if num < 2:
+            continue
+        corpo = m.group(2)
+        convenio = None
+        ca = re.search(r'<c r="A\d+"[^>]*?>(?:<v>([^<]*)</v>|<t[^>]*>([^<]*)</t>)?</c>', corpo)
+        if ca and ca.group(1) is not None and 't="s"' in ca.group(0):
+            convenio = strings.texto_de_indice(int(ca.group(1))).strip()
+        elif ca and ca.group(2) is not None:
+            convenio = ca.group(2).strip()
+        cb = re.search(r'<c r="B\d+"[^>]*?><v>([^<]*)</v></c>', corpo)
+        serial = None if cb is None else cb.group(1)
+        if convenio is not None:
+            existentes.add((convenio, serial))
 
-    texto = re.sub(r'<row r="(\d+)"[^>]*>.*?</row>', _remover_obsoletas, xml_bd2, flags=re.DOTALL)
+    novas: list[dict] = []
+    if bloco:
+        vistos = set(existentes)
+        for b in bloco:
+            chave = (b["convenio"], str(b["data"]))
+            if chave in vistos:
+                continue
+            vistos.add(chave)
+            novas.append(b)
 
     def _normalizar_coluna_a(m):
         nonlocal mudou
         num = int(m.group(1))
-        if not (2 <= num <= fim_util):
+        if num < 2:
             return m.group(0)
         cel = re.search(r'<c r="A\d+"[^>]*?><v>(\d+)</v></c>', m.group(3))
         if not cel or 't="s"' not in cel.group(0):
@@ -429,27 +446,27 @@ def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | 
         mudou = True
         return f'<row r="{num}"{m.group(2)}>{m.group(3).replace(cel.group(0), cel_nova, 1)}</row>'
 
-    texto = re.sub(r'<row r="(\d+)"([^>]*)>(.*?)</row>', _normalizar_coluna_a, texto, flags=re.DOTALL)
+    texto = re.sub(r'<row r="(\d+)"([^>]*)>(.*?)</row>', _normalizar_coluna_a, xml_bd2, flags=re.DOTALL)
 
     novas_celulas = 0
-    if bloco:
+    if novas:
         mudou = True
-        linhas = "".join(_linha_bd2(LINHA_CORTE_BD2 + i, b["convenio"], b["data"],
+        linhas = "".join(_linha_bd2(fim_atual + 1 + i, b["convenio"], b["data"],
                                     b["valores"], strings)
-                         for i, b in enumerate(bloco))
-        novas_celulas = len(bloco)
+                         for i, b in enumerate(novas))
+        novas_celulas = len(novas)
         idx = texto.rfind("</sheetData>")
         texto = texto[:idx] + linhas + texto[idx:]
-        novo_fim = LINHA_CORTE_BD2 + len(bloco) - 1
+        novo_fim = fim_atual + len(novas)
     else:
-        novo_fim = fim_util
+        novo_fim = fim_atual
 
     if not mudou:
-        return None, None, 0, {}, 0
+        return None, None, 0, {}, []
     texto = _substituir_ou_falhar(
         r'<dimension ref="A1:J(\d+)"/>',
         f'<dimension ref="A1:J{novo_fim}"/>', texto, "dimension da BD2")
-    return texto, novo_fim, novas_celulas, mapeamento, n_obsoletas
+    return texto, novo_fim, novas_celulas, mapeamento, novas
 
 
 # ==============================================================================
@@ -591,7 +608,7 @@ def _record_bd2(item: dict, cache: pc.CachePivot) -> str:
 def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
              bloco: list[dict] | None, mapeamento_bd2: dict,
              fim_bd1_novo: int | None, fim_bd2_novo: int | None,
-             n_obsoletas_bd2: int) -> None:
+             novas_bd2: list) -> None:
     """Regenera os caches embutidos (BD1/BD2) com os dados finais e grava os
     estados de timeline/slicer/pivô do arquivo de referência — determinístico
     a cada rodada (sem depender de o Excel recalcular ao abrir)."""
@@ -612,18 +629,14 @@ def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
             [_record_bd1(_converter_linha_wpd(linha), cache_bd1, hoje)
              for _, linha in novas.iterrows()])
 
-    # -- BD2: drop dos records do bloco obsoleto + records do bloco novo +
-    # normalização dos convênios — só quando a FASE 3b mexeu na planilha.
+    # -- BD2: records das linhas novas + normalização dos convênios — as
+    # linhas da base permanecem intactas na planilha e no cache; entram só as
+    # linhas do bloco sem chave repetida (mesma ordem das linhas da planilha).
     if fim_bd2_novo is not None:
-        if cache_bd2.n_registros < n_obsoletas_bd2:
-            raise RuntimeError(
-                f"cache da BD2 ({cache_bd2.n_registros} records) menor que o "
-                f"bloco obsoleto removido ({n_obsoletas_bd2}) — cache inconsistente")
-        cache_bd2.remover_registros_finais(n_obsoletas_bd2)
         if mapeamento_bd2:
             cache_bd2.substituir_strings("Convênio", mapeamento_bd2)
-        if bloco:
-            cache_bd2.anexar_registros([_record_bd2(b, cache_bd2) for b in bloco])
+        if novas_bd2:
+            cache_bd2.anexar_registros([_record_bd2(b, cache_bd2) for b in novas_bd2])
 
     # -- timeline "Entrega" = mês de fechamento --
     inicio, fim = _janela_entrega(hoje)
@@ -684,7 +697,7 @@ def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
     substituicoes[nome_def_bd1], substituicoes[nome_rec_bd1] = cache_bd1.para_xml()
     substituicoes[nome_def_bd2], substituicoes[nome_rec_bd2] = cache_bd2.para_xml()
 
-    esperado_bd2 = (n_inicial_bd2 - n_obsoletas_bd2 + len(bloco or [])
+    esperado_bd2 = (n_inicial_bd2 + len(novas_bd2)
                     if fim_bd2_novo is not None else None)
     _validar_pivos(substituicoes, partes, cache_bd1, cache_bd2,
                    fim_bd1_novo, esperado_bd2)
@@ -713,7 +726,7 @@ def _validar_pivos(substituicoes: dict, partes: dict, cache_bd1: pc.CachePivot,
                      f"({fim_bd1_novo - 1} linhas de dados)")
     if esperado_bd2 is not None and cache_bd2.n_registros != esperado_bd2:
         erros.append(f"cache BD2 com {cache_bd2.n_registros} records ≠ esperado "
-                     f"({esperado_bd2} = inicial − obsoletas + bloco novo)")
+                     f"({esperado_bd2} = inicial + linhas novas)")
     if erros:
         raise RuntimeError("Falha no gate dos pivôs: " + "; ".join(erros))
 
@@ -813,12 +826,12 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
     bloco = None
     mapeamento_bd2 = {}
     fim_bd2_novo = None
-    n_obsoletas_bd2 = 0
+    novas_bd2: list = []
     if xlsx_nao_identificado_limpo is not None:
         bloco = _bloco_bd2(xlsx_nao_identificado_limpo)
         resultado = _editar_bd2(partes["xl/worksheets/sheet6.xml"], bloco, strings)
         if resultado[0] is not None:
-            xml_bd2, fim_bd2_novo, refs, mapeamento_bd2, n_obsoletas_bd2 = resultado
+            xml_bd2, fim_bd2_novo, refs, mapeamento_bd2, novas_bd2 = resultado
             substituicoes["xl/worksheets/sheet6.xml"] = xml_bd2
             novas_celulas += refs
             substituicoes["xl/tables/table2.xml"] = _ajustar_tabela(
@@ -831,7 +844,7 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
                     "uma saída incorreta.")
             substituicoes[parte_cache_bd2] = _ajustar_cache1(
                 partes[parte_cache_bd2], fim_bd2_novo)
-            print(f"[FASE 3] BD2: bloco atualizado — fim {fim_bd2_novo}.")
+            print(f"[FASE 3] BD2: {len(novas_bd2)} linha(s) nova(s) — fim {fim_bd2_novo}.")
         else:
             print("[FASE 3] BD2: nada a mudar.")
     else:
@@ -842,7 +855,7 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
                           or "xl/worksheets/sheet6.xml" in substituicoes)
     if mudou_alguma_coisa:
         _fase_3c(partes, substituicoes, novas, bloco, mapeamento_bd2,
-                 fim_bd1_novo, fim_bd2_novo, n_obsoletas_bd2)
+                 fim_bd1_novo, fim_bd2_novo, novas_bd2)
 
     # ---- FASE 4: gravação ----
     if mudou_alguma_coisa:
