@@ -47,6 +47,9 @@ _RE_CAMPO = re.compile(
 _RE_SHARED = re.compile(r'<sharedItems\b(?P<attrs>[^>]*)>(?P<filhos>.*?)</sharedItems>', re.S)
 _RE_ITEM = re.compile(r'<(?P<t>[nsdm])\b(?P<a>[^>]*)/>')
 _RE_R = re.compile(r"<r>.*?</r>", re.S)
+# entradas C-I do record: <n v="..."/>, <s v="..."/> (string histórica da
+# base) ou <m/> (vazio)
+_RE_ENTRADA_NM = re.compile(r'<n v="([^"]*)"/>|<s v="([^"]*)"/>|<m/>')
 _RE_PIVOT_FIELD = re.compile(r"<pivotField\b[^>]*?/>|<pivotField\b.*?</pivotField>", re.S)
 _RE_STATE = re.compile(r"<state\b.*?</state>", re.S)
 _RE_STATE_V = re.compile(r"<state\b[^>]*/>")
@@ -182,6 +185,75 @@ class CachePivot:
                 f"cache com {len(blocos)} registros não tem {n} finais para remover")
         self._reg = prefixo + "".join(blocos[:-n]) + self._reg[idx_fim:]
         self._n_registros -= n
+
+    def atualizar_registro(self, indice: int, valores: list,
+                           valores_antigos: list) -> None:
+        """Upsert posicional do record `indice` (entradas C-I): `valores[i]` é
+        a string canônica nova ou None (preserva a posição). `valores_antigos`
+        é a rede de segurança: o valor atual esperado, posição a posição —
+        None é wildcard (posição string ou ausente, não comparada). Se o
+        record do índice não bater, é localizado pelos valores antigos —
+        linha da BD2 <-> record andam juntos e uma divergência aqui é sinal de
+        bug, nunca de gravação cega. Entradas <s> (strings históricas) nunca
+        são substituídas."""
+        if valores == valores_antigos:
+            return  # sem mudança
+        idx_fim = self._reg.rindex("</pivotCacheRecords>")
+        cabeca = self._reg[:idx_fim]
+        primeiro = cabeca.index("<r>")
+        prefixo = cabeca[:primeiro]
+        blocos = _RE_R.findall(cabeca[primeiro:])
+
+        def _atuais(bloco: str) -> list:
+            return [m.group(1) or m.group(2) for m in _RE_ENTRADA_NM.finditer(bloco)]
+
+        def _bate(bloco: str) -> bool:
+            """O record bate com os valores antigos se as posições comparáveis
+            casarem (None em valores_antigos é wildcard); entradas ausentes no
+            fim do record equivalem a None (o Excel omite os <m/> finais em
+            records parcialmente vazios)."""
+            atuais = _atuais(bloco)
+            if len(atuais) < len(valores_antigos):
+                if not all(v is None for v in valores_antigos[len(atuais):]):
+                    return False
+            n = min(len(atuais), len(valores_antigos))
+            return all(valores_antigos[i] is None or atuais[i] == valores_antigos[i]
+                       for i in range(n))
+
+        alvo = None
+        if 0 <= indice < len(blocos) and _bate(blocos[indice]):
+            alvo = indice
+        if alvo is None:
+            candidatos = [i for i, b in enumerate(blocos) if _bate(b)]
+            if len(candidatos) != 1:
+                raise RuntimeError(
+                    f"atualizar_registro: valores antigos {valores_antigos} não "
+                    f"localizam um único record (índice {indice}, candidatos "
+                    f"{candidatos})")
+            alvo = candidatos[0]
+        atuais = _atuais(blocos[alvo])
+        for i, v in enumerate(valores):
+            if v is not None and i >= len(atuais):
+                raise RuntimeError(
+                    f"atualizar_registro: valor novo na posição {i} além do "
+                    f"record {alvo} ({len(atuais)} entradas C-I)")
+        if not any(v is not None and v != atuais[i] for i, v in enumerate(valores)):
+            return  # nada muda de fato
+        contador = [0]
+
+        def _troca(m):
+            i = contador[0]
+            contador[0] += 1
+            if m.group(2) is not None:  # <s> — string histórica, nunca substituída
+                return m.group(0)
+            novo = valores[i] if i < len(valores) else None
+            if novo is None or novo == m.group(1):
+                return m.group(0)
+            return f'<n v="{novo}"/>'
+
+        novo_bloco = _RE_ENTRADA_NM.sub(_troca, blocos[alvo])
+        self._reg = prefixo + "".join(
+            novo_bloco if i == alvo else b for i, b in enumerate(blocos)) + self._reg[idx_fim:]
 
     # -- serialização ---------------------------------------------------------
     def para_xml(self) -> tuple[str, str]:

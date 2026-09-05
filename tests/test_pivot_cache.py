@@ -119,6 +119,100 @@ def test_para_xml_anexa_itens_e_atualiza_metadados():
     assert 'count="2"' in registros and registros.count("<r>") == 2
 
 
+# ==============================================================================
+# CachePivot — atualizar_registro (upsert do NI editado)
+# ==============================================================================
+def test_atualizar_registro_substitui_valores_no_indice():
+    campos = ['<cacheField name="Convênio" numFmtId="0"><sharedItems count="1">'
+              '<s v="HOSPITAL ABC"/></sharedItems></cacheField>']
+    cache = pc.CachePivot(
+        _def(campos),
+        _records(['<x v="0"/><n v="1"/><n v="2"/><n v="3"/>',
+                  '<x v="0"/><n v="4"/><n v="5"/><n v="6"/>']))
+    cache.atualizar_registro(1, ["40", "50", "60"], ["4", "5", "6"])
+    _, registros = cache.para_xml()
+    assert '<r><x v="0"/><n v="40"/><n v="50"/><n v="60"/></r>' in registros
+    assert '<r><x v="0"/><n v="1"/><n v="2"/><n v="3"/></r>' in registros
+    assert 'count="2"' in registros
+
+
+def test_atualizar_registro_sem_mudanca_nao_altera_nada():
+    cache = pc.CachePivot(_def([]), _records(['<n v="1"/>', '<n v="2"/>']))
+    reg_antes, def_antes = cache._reg, cache._def
+    cache.atualizar_registro(0, ["1"], ["1"])
+    # nada é gravado — para_xml() não entra na conta (sempre regrava
+    # refreshedDate com o horário atual)
+    assert cache._reg == reg_antes and cache._def == def_antes
+
+
+def test_atualizar_registro_valores_antigos_divergentes_localiza_por_valor():
+    """Se o ordinal não aponta para o record esperado, o método localiza o
+    record pelos valores antigos e atualiza ESSE (defesa de desalinhamento
+    linha <-> record)."""
+    cache = pc.CachePivot(
+        _def([]),
+        _records(['<n v="1"/><n v="9"/>', '<n v="4"/><n v="5"/><n v="6"/>']))
+    cache.atualizar_registro(0, ["40", "50", "60"], ["4", "5", "6"])
+    _, registros = cache.para_xml()
+    assert '<r><n v="1"/><n v="9"/></r>' in registros
+    assert '<r><n v="40"/><n v="50"/><n v="60"/></r>' in registros
+
+
+def test_atualizar_registro_valores_antigos_inexistentes_aborta():
+    cache = pc.CachePivot(_def([]), _records(['<n v="1"/>', '<n v="2"/>']))
+    with pytest.raises(RuntimeError, match="registro"):
+        cache.atualizar_registro(0, ["9"], ["7"])
+
+
+def test_atualizar_registro_none_preserva_posicao():
+    """None na posição preserva o valor atual (coluna sem dado no NI)."""
+    cache = pc.CachePivot(_def([]), _records(['<n v="1"/><n v="2"/><n v="3"/>']))
+    cache.atualizar_registro(0, ["10", None, "30"], ["1", "2", "3"])
+    _, registros = cache.para_xml()
+    assert '<r><n v="10"/><n v="2"/><n v="30"/></r>' in registros
+
+
+def test_atualizar_registro_substitui_blank_por_numero():
+    """<m/> ganha <n> quando o bloco traz valor naquela posição."""
+    cache = pc.CachePivot(_def([]), _records(['<n v="1"/><m/>']))
+    cache.atualizar_registro(0, ["9", "8"], ["1", None])
+    _, registros = cache.para_xml()
+    assert '<r><n v="9"/><n v="8"/></r>' in registros
+
+
+def test_atualizar_registro_record_parcial_omite_blank_final():
+    """Record sem os <m/> finais (forma compacta do Excel) localiza e
+    atualiza pelas posições presentes — cauda None não contradiz."""
+    cache = pc.CachePivot(_def([]), _records(['<n v="1"/><n v="2"/><n v="3"/>']))
+    cache.atualizar_registro(0, ["10", None, None, None, None, None, None],
+                             ["1", "2", "3", None, None, None, None])
+    _, registros = cache.para_xml()
+    assert '<r><n v="10"/><n v="2"/><n v="3"/></r>' in registros
+
+
+def test_atualizar_registro_valor_alem_do_record_aborta():
+    cache = pc.CachePivot(_def([]), _records(['<n v="1"/>']))
+    with pytest.raises(RuntimeError, match="além"):
+        cache.atualizar_registro(0, ["9", "8"], ["1"])
+
+
+def test_atualizar_registro_preserva_string_e_wildcard():
+    """<s> (string histórica da base) nunca é substituída; None em
+    valores_antigos é wildcard (posições não comparadas)."""
+    cache = pc.CachePivot(_def([]), _records(
+        ['<n v="21.87"/><s v="              "/><n v="0"/>']))
+    cache.atualizar_registro(0, ["50000", None, None], ["21.87", None, None])
+    _, registros = cache.para_xml()
+    assert '<r><n v="50000"/><s v="              "/><n v="0"/></r>' in registros
+
+
+def test_atualizar_registro_dois_records_candidatos_aborta_por_ambiguidade():
+    cache = pc.CachePivot(_def([]), _records(
+        ['<n v="1"/><n v="1"/>', '<n v="2"/><n v="2"/>', '<n v="2"/><n v="2"/>']))
+    with pytest.raises(RuntimeError, match="único"):
+        cache.atualizar_registro(0, ["9", "9"], ["2", "2"])
+
+
 def test_para_xml_recalcula_min_max_numerico():
     campos = ['<cacheField name="Remessa" numFmtId="0"><sharedItems count="1" '
               'minValue="117129" maxValue="117129" containsNumber="1" '

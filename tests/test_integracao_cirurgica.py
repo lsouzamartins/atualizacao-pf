@@ -132,11 +132,12 @@ XML_BD2_MINI = (
 
 def test_editar_bd2_preserva_base_deduplica_e_insere():
     s = ie._StringsCompartilhadas(_sst(["CABEÇALHO", "Convênio ", "OBJETO"]))
-    xml, fim, novas_celulas, mapeamento, novas = ie._editar_bd2(
+    xml, fim, novas_celulas, mapeamento, novas, atualizacoes = ie._editar_bd2(
         XML_BD2_MINI,
         [{"convenio": "Convênio", "data": 45001,
           "valores": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]},
-         # chave já existente (Convênio + serial 45000 da linha 2) — é pulada
+         # chave já existente (Convênio + serial 45000 da linha 2) com valores
+         # diferentes — upsert: atualiza a linha 2 em vez de anexar
          {"convenio": "Convênio", "data": 45000,
           "valores": [9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0]}],
         s)
@@ -144,7 +145,11 @@ def test_editar_bd2_preserva_base_deduplica_e_insere():
     assert novas_celulas == 1
     assert len(novas) == 1
     assert novas[0]["convenio"] == "Convênio" and novas[0]["data"] == 45001
+    assert len(atualizacoes) == 1
+    assert atualizacoes[0]["linha"] == 2 and atualizacoes[0]["record"] == 0
+    assert atualizacoes[0]["valores"] == ["9"] * 7
     assert mapeamento == {"Convênio ": "Convênio"}
+    assert '<c r="C2" s="49"><v>9</v></c>' in xml   # upsert na linha 2
     # todas as linhas da base preservadas
     assert '<c r="A806" s="5"' in xml
     assert '<c r="A808"' in xml
@@ -160,6 +165,88 @@ def test_editar_bd2_preserva_base_deduplica_e_insere():
     assert 'ref="A1:J808"' not in xml
 
 
+def test_editar_bd2_upsert_atualiza_linha_com_chave_existente():
+    """Linha do NI com chave já existente e VALOR DIFERENTE deve ATUALIZAR a
+    linha da base (upsert) — a edição do usuário no NI prevalece (causa raiz
+    do reporte de 05/09: valor editado no NI voltou ao original)."""
+    s = ie._StringsCompartilhadas(_sst(["CABEÇALHO", "Convênio ", "OBJETO"]))
+    xml, fim, novas_celulas, mapeamento, novas, atualizacoes = ie._editar_bd2(
+        XML_BD2_MINI,
+        [{"convenio": "Convênio", "data": 45000,   # chave da linha 2 existente
+          "valores": [9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0]}],
+        s)
+    assert fim == 808                        # nenhuma linha nova
+    assert novas_celulas == 0
+    assert novas == []
+    assert mapeamento == {"Convênio ": "Convênio"}
+    assert len(atualizacoes) == 1
+    att = atualizacoes[0]
+    assert att["linha"] == 2
+    assert att["record"] == 0                # record 0 = linha 2
+    assert att["valores"] == ["9", "8", "7", "6", "5", "4", "3"]
+    # células C2:I2 ganham os novos valores (s="49" como as numéricas da BD2)
+    assert '<c r="C2" s="49"><v>9</v></c>' in xml
+    assert '<c r="I2" s="49"><v>3</v></c>' in xml
+    assert '<c r="A2" s="34" t="s"><v>3</v></c>' in xml   # convênio normalizado
+    assert '<c r="B2" s="35"><v>45000</v></c>' in xml     # data preservada
+    assert 'ref="A1:J808"' in xml
+
+
+def test_editar_bd2_chave_existente_com_valores_iguais_e_pulada():
+    """Dedupe puro: chave existente com os MESMOS valores não gera nada."""
+    xml_base = (DECL
+                + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                + '<dimension ref="A1:J2"/>'
+                + '<sheetData>'
+                + '<row r="1" spans="1:10"><c r="A1" s="34" t="s"><v>0</v></c></row>'
+                + '<row r="2" spans="1:10"><c r="A2" s="34" t="s"><v>1</v></c>'
+                + '<c r="B2" s="35"><v>45000</v></c>'
+                + '<c r="C2" s="49"><v>1</v></c><c r="D2" s="49"><v>2</v></c>'
+                + '<c r="E2" s="49"><v>3</v></c><c r="F2" s="49"><v>4</v></c>'
+                + '<c r="G2" s="49"><v>5</v></c><c r="H2" s="49"><v>6</v></c>'
+                + '<c r="I2" s="49"><v>7</v></c></row>'
+                + '</sheetData>'
+                + '</worksheet>')
+    s = ie._StringsCompartilhadas(_sst(["CABEÇALHO", "Convênio"]))
+    xml, fim, novas_celulas, mapeamento, novas, atualizacoes = ie._editar_bd2(
+        xml_base,
+        [{"convenio": "Convênio", "data": 45000,
+          "valores": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]}],
+        s)
+    assert xml is None and fim is None          # nada mudou
+    assert novas == [] and atualizacoes == []
+
+
+def test_editar_bd2_upsert_nao_toca_string_nem_repr_de_float():
+    """Comparação SEMÂNTICA: célula t='s' (string histórica) e repr de float
+    equivalente ('610.41999999999996' vs 610.42) ficam intocadas — só o valor
+    numericamente diferente é atualizado (e a célula ausente é criada)."""
+    xml_base = (DECL
+                + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                + '<dimension ref="A1:J2"/>'
+                + '<sheetData>'
+                + '<row r="1" spans="1:10"><c r="A1" s="34" t="s"><v>0</v></c></row>'
+                + '<row r="2" spans="1:10"><c r="A2" s="34" t="s"><v>1</v></c>'
+                + '<c r="B2" s="35"><v>45000</v></c>'
+                + '<c r="C2" s="49"><v>610.41999999999996</v></c>'
+                + '<c r="E2" s="49" t="s"><v>107</v></c></row>'
+                + '</sheetData>'
+                + '</worksheet>')
+    s = ie._StringsCompartilhadas(_sst(["CABEÇALHO", "Convênio"]))
+    xml, fim, nc, mapa, novas, atts = ie._editar_bd2(
+        xml_base,
+        [{"convenio": "Convênio", "data": 45000,
+          "valores": [610.42, 9.0, 0.0, None, None, None, None]}],
+        s)
+    assert fim == 2
+    assert novas == [] and nc == 0
+    assert len(atts) == 1
+    assert atts[0]["valores"] == [None, "9", None, None, None, None, None]
+    assert '<c r="C2" s="49"><v>610.41999999999996</v></c>' in xml  # repr intocado
+    assert '<c r="E2" s="49" t="s"><v>107</v></c>' in xml             # string intocada
+    assert '<c r="D2" s="49"><v>9</v></c>' in xml                     # ausente criada
+
+
 def test_editar_bd2_sem_mudanca_devolve_none():
     xml_limpo = (DECL
                  + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
@@ -170,9 +257,9 @@ def test_editar_bd2_sem_mudanca_devolve_none():
                  + '</sheetData>'
                  + '</worksheet>')
     s = ie._StringsCompartilhadas(_sst(["CABEÇALHO", "Convênio"]))
-    xml, fim, n, mapeamento, novas = ie._editar_bd2(xml_limpo, None, s)
+    xml, fim, n, mapeamento, novas, atualizacoes = ie._editar_bd2(xml_limpo, None, s)
     assert xml is None and fim is None and n == 0
-    assert mapeamento == {} and novas == []
+    assert mapeamento == {} and novas == [] and atualizacoes == []
 
 
 # ==============================================================================

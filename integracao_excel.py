@@ -385,23 +385,74 @@ def _linha_bd2(num_linha: int, convenio: str, data_serial: int,
     return f'<row r="{num_linha}">{"".join(cels)}</row>'
 
 
-def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | None, int | None, int, dict, list]:
+_RE_CEL_CI = re.compile(r'<c r="([C-I])(\d+)"([^>]*)>(?:(?:<v>([^<]*)</v>)?</c>|/>)')
+_COLS_CI = ["C", "D", "E", "F", "G", "H", "I"]
+
+
+def _float_iguais(a, b) -> bool:
+    """Mesmo número: `a` é a string bruta do XML (ou None), `b` a canônica.
+    Igualdade NUMÉRICA — '610.41999999999996' == '610.42' (repr do Excel)."""
+    if a is None or b is None:
+        return a is None and b is None
+    try:
+        return float(a) == float(b)
+    except ValueError:
+        return a == b
+
+
+def _valores_c_i(corpo: str) -> dict:
+    """{coluna C-I: (valor bruto do <v>, é string t='s')} de uma row da BD2 —
+    célula ausente ou <v> vazio → (None, False)."""
+    return {m.group(1): (m.group(4) or None, 't="s"' in (m.group(3) or ""))
+            for m in _RE_CEL_CI.finditer(corpo)}
+
+
+def _upsert_c_i(corpo: str, linha: int, novos: list) -> str:
+    """Atualiza/injeta as células C-I de uma row: `novos[i]` é o valor
+    canônico novo (None preserva a posição). Só células NUMÉRICAS com valor
+    numericamente diferente são reescritas (preservando o estilo original);
+    células t='s' (strings históricas) e reprs de float equivalentes são
+    intocadas; células que faltam são criadas antes de </row>."""
+    def _troca(m):
+        col, attrs, atual = m.group(1), m.group(3) or "", m.group(4)
+        i = ord(col) - ord("C")
+        novo = novos[i] if i < len(novos) else None
+        if novo is None or 't="s"' in attrs or _float_iguais(atual, novo):
+            return m.group(0)
+        if m.group(4) is None:  # célula sem <v>
+            if m.group(0).endswith("/>"):
+                return m.group(0)[:-2] + f'><v>{novo}</v></c>'
+            return m.group(0).replace("</c>", f"<v>{novo}</v></c>", 1)
+        return m.group(0).replace(f"<v>{m.group(4)}</v>", f"<v>{novo}</v>", 1)
+    corpo_novo = _RE_CEL_CI.sub(_troca, corpo)
+    presentes = {m.group(1) for m in _RE_CEL_CI.finditer(corpo_novo)}
+    criadas = [f'<c r="{_COLS_CI[i]}{linha}" s="49"><v>{novo}</v></c>'
+               for i, novo in enumerate(novos)
+               if novo is not None and _COLS_CI[i] not in presentes]
+    return corpo_novo + "".join(criadas)
+
+
+def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | None, int | None, int, dict, list, list]:
     """(1) normaliza a coluna A (tira o preenchimento de espaços,
-    sincronizando sharedStrings); (2) anexa APENAS as linhas do bloco cuja
-    chave (Convênio, Data) ainda não existe na planilha — as linhas da base
-    são preservadas integralmente (a BD2 é o histórico curado pelo usuário,
-    nunca regenerado do WPD); (3) atualiza a dimension.
+    sincronizando sharedStrings); (2) UPSERT das linhas do bloco pela chave
+    (Convênio, Data): chave nova anexa no fim; chave existente com valores
+    iguais é pulada (dedupe); chave existente com valores diferentes ATUALIZA
+    as células C-I da linha existente — a edição do usuário no NI prevalece
+    sem reescrever o restante da base (a BD2 é o histórico curado, nunca
+    regenerado do WPD); (3) atualiza a dimension.
     Retorna (xml_novo, fim_novo, células t="s" novas, mapeamento da
-    normalização, linhas novas do bloco) ou (None, None, 0, {}, []).
-    O mapeamento {original: limpo} permite à FASE 3c renormalizar o cache
-    embutido da BD2 no lugar; as linhas novas alimentam os records novos do
-    cache (mesma ordem das linhas da planilha)."""
+    normalização, linhas novas do bloco, atualizações) ou (None, None, 0,
+    {}, [], []). O mapeamento {original: limpo} permite à FASE 3c
+    renormalizar o cache embutido da BD2 no lugar; as linhas novas alimentam
+    os records novos do cache (mesma ordem das linhas da planilha) e as
+    atualizações são {linha, record, valores, valores_antigos} posicionais
+    C-I (None preserva a posição) para o upsert do record correspondente."""
     fim_atual = _ultima_linha(xml_bd2)
     mudou = False
     mapeamento = {}
 
-    # chaves já presentes: (Convênio sem padding, serial da data em B)
-    existentes = set()
+    # chaves já presentes: (Convênio sem padding, serial da data em B) -> (linha, corpo)
+    existentes: dict[tuple, tuple[int, str]] = {}
     for m in re.finditer(r'<row r="(\d+)"[^>]*>(.*?)</row>', xml_bd2, flags=re.DOTALL):
         num = int(m.group(1))
         if num < 2:
@@ -416,16 +467,39 @@ def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | 
         cb = re.search(r'<c r="B\d+"[^>]*?><v>([^<]*)</v></c>', corpo)
         serial = None if cb is None else cb.group(1)
         if convenio is not None:
-            existentes.add((convenio, serial))
+            existentes.setdefault((convenio, serial), (num, corpo))
 
     novas: list[dict] = []
+    atualizacoes: list[dict] = []
     if bloco:
-        vistos = set(existentes)
+        vistos = set()
         for b in bloco:
             chave = (b["convenio"], str(b["data"]))
             if chave in vistos:
-                continue
+                continue  # duplicata dentro do próprio bloco
             vistos.add(chave)
+            if chave in existentes:
+                linha, corpo = existentes[chave]
+                novos_vals = [None if v is None else _numero(v) for v in b["valores"]]
+                atuais = _valores_c_i(corpo)
+                vals, antigos = [], []
+                for i, novo in enumerate(novos_vals):
+                    v_bruto, eh_str = atuais.get(_COLS_CI[i], (None, False))
+                    if eh_str or _float_iguais(v_bruto, novo):
+                        # string histórica intocada; mesmo número não reescreve
+                        vals.append(None)
+                        antigos.append(None)
+                        continue
+                    vals.append(novo)
+                    antigos.append(v_bruto)
+                if any(v is not None for v in vals):
+                    atualizacoes.append({
+                        "linha": linha,
+                        "record": linha - 2,  # records ordenados: record_idx = linha - 2
+                        "valores": vals,
+                        "valores_antigos": antigos,
+                    })
+                continue
             novas.append(b)
 
     def _normalizar_coluna_a(m):
@@ -448,6 +522,18 @@ def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | 
 
     texto = re.sub(r'<row r="(\d+)"([^>]*)>(.*?)</row>', _normalizar_coluna_a, xml_bd2, flags=re.DOTALL)
 
+    if atualizacoes:
+        mudou = True
+        for att in atualizacoes:
+            linha, vals = att["linha"], att["valores"]
+
+            def _troca_row(m):
+                return f'<row r="{linha}"{m.group(1)}>{_upsert_c_i(m.group(2), linha, vals)}</row>'
+            texto, n = re.subn(rf'<row r="{linha}"([^>]*)>(.*?)</row>', _troca_row,
+                               texto, count=1, flags=re.DOTALL)
+            if n != 1:
+                raise RuntimeError(f"upsert: linha {linha} da BD2 não localizada")
+
     novas_celulas = 0
     if novas:
         mudou = True
@@ -462,11 +548,11 @@ def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | 
         novo_fim = fim_atual
 
     if not mudou:
-        return None, None, 0, {}, []
+        return None, None, 0, {}, [], []
     texto = _substituir_ou_falhar(
         r'<dimension ref="A1:J(\d+)"/>',
         f'<dimension ref="A1:J{novo_fim}"/>', texto, "dimension da BD2")
-    return texto, novo_fim, novas_celulas, mapeamento, novas
+    return texto, novo_fim, novas_celulas, mapeamento, novas, atualizacoes
 
 
 # ==============================================================================
@@ -608,7 +694,7 @@ def _record_bd2(item: dict, cache: pc.CachePivot) -> str:
 def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
              bloco: list[dict] | None, mapeamento_bd2: dict,
              fim_bd1_novo: int | None, fim_bd2_novo: int | None,
-             novas_bd2: list) -> None:
+             novas_bd2: list, atualizacoes_bd2: list) -> None:
     """Regenera os caches embutidos (BD1/BD2) com os dados finais e grava os
     estados de timeline/slicer/pivô do arquivo de referência — determinístico
     a cada rodada (sem depender de o Excel recalcular ao abrir)."""
@@ -629,12 +715,18 @@ def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
             [_record_bd1(_converter_linha_wpd(linha), cache_bd1, hoje)
              for _, linha in novas.iterrows()])
 
-    # -- BD2: records das linhas novas + normalização dos convênios — as
-    # linhas da base permanecem intactas na planilha e no cache; entram só as
-    # linhas do bloco sem chave repetida (mesma ordem das linhas da planilha).
+    # -- BD2: records das linhas novas + normalização dos convênios + upsert
+    # das linhas editadas — as demais linhas da base permanecem intactas na
+    # planilha e no cache; entram só as linhas do bloco sem chave repetida
+    # (mesma ordem das linhas da planilha) e as atualizações pontuais (edição
+    # do usuário no NI prevalece sobre o valor antigo).
     if fim_bd2_novo is not None:
         if mapeamento_bd2:
             cache_bd2.substituir_strings("Convênio", mapeamento_bd2)
+        if atualizacoes_bd2:
+            for att in atualizacoes_bd2:
+                cache_bd2.atualizar_registro(att["record"], att["valores"],
+                                             att["valores_antigos"])
         if novas_bd2:
             cache_bd2.anexar_registros([_record_bd2(b, cache_bd2) for b in novas_bd2])
 
@@ -827,11 +919,12 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
     mapeamento_bd2 = {}
     fim_bd2_novo = None
     novas_bd2: list = []
+    atualizacoes_bd2: list = []
     if xlsx_nao_identificado_limpo is not None:
         bloco = _bloco_bd2(xlsx_nao_identificado_limpo)
         resultado = _editar_bd2(partes["xl/worksheets/sheet6.xml"], bloco, strings)
         if resultado[0] is not None:
-            xml_bd2, fim_bd2_novo, refs, mapeamento_bd2, novas_bd2 = resultado
+            xml_bd2, fim_bd2_novo, refs, mapeamento_bd2, novas_bd2, atualizacoes_bd2 = resultado
             substituicoes["xl/worksheets/sheet6.xml"] = xml_bd2
             novas_celulas += refs
             substituicoes["xl/tables/table2.xml"] = _ajustar_tabela(
@@ -844,7 +937,8 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
                     "uma saída incorreta.")
             substituicoes[parte_cache_bd2] = _ajustar_cache1(
                 partes[parte_cache_bd2], fim_bd2_novo)
-            print(f"[FASE 3] BD2: {len(novas_bd2)} linha(s) nova(s) — fim {fim_bd2_novo}.")
+            print(f"[FASE 3] BD2: {len(novas_bd2)} linha(s) nova(s), "
+                  f"{len(atualizacoes_bd2)} atualizada(s) — fim {fim_bd2_novo}.")
         else:
             print("[FASE 3] BD2: nada a mudar.")
     else:
@@ -855,7 +949,7 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
                           or "xl/worksheets/sheet6.xml" in substituicoes)
     if mudou_alguma_coisa:
         _fase_3c(partes, substituicoes, novas, bloco, mapeamento_bd2,
-                 fim_bd1_novo, fim_bd2_novo, novas_bd2)
+                 fim_bd1_novo, fim_bd2_novo, novas_bd2, atualizacoes_bd2)
 
     # ---- FASE 4: gravação ----
     if mudou_alguma_coisa:
