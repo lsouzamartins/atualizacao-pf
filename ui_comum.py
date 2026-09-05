@@ -143,6 +143,77 @@ def injetar_css():
 
 
 # ---------------------------------------------------------------------------
+# TELA DE LOGIN — fundo escuro, título no topo centralizado e cartão branco ao centro
+# ---------------------------------------------------------------------------
+LOGIN_CSS = """
+<style>
+    /* Fundo azul-marinho em tela cheia */
+    html, body, .stApp { min-height: 100vh; }
+    .stApp { background: #131A3D; }
+    div[data-testid="stMainBlockContainer"], .block-container {
+        max-width: 100%; padding-left: 0; padding-right: 0; padding-top: 0; padding-bottom: 0;
+    }
+
+    /* Chrome do Streamlit oculto nesta tela */
+    #MainMenu, footer, [data-testid="stDecoration"], header[data-testid="stHeader"] { visibility: hidden; }
+
+    /* Título da página, no topo e centralizado */
+    .login-titulo-pagina {
+        text-align: center; color: #FFFFFF; font-size: 1.9rem; font-weight: 800;
+        padding: 2.2rem 1rem 0 1rem; letter-spacing: .2px;
+    }
+
+    /* Área do formulário: centralizada vertical e horizontalmente */
+    div[data-testid="stHorizontalBlock"] { min-height: calc(100vh - 9rem); align-items: center; }
+
+    /* Cartão branco */
+    .login-card { background: #FFFFFF; border-radius: 18px; box-shadow: 0 24px 60px rgba(0, 0, 0, .35);
+                  padding: 2.6rem 2.4rem 2.2rem 2.4rem; max-width: 430px; margin: 0 auto; }
+    .login-card-titulo { font-size: 1.55rem; font-weight: 800; color: #131A3D; margin-bottom: .25rem; }
+    .login-card-sub { font-size: .86rem; color: #64748B; margin-bottom: 1.7rem; }
+
+    /* Campos com ícones (usuário / cadeado) */
+    .login-card div[data-testid="stTextInput"] { margin-bottom: .85rem; }
+    .login-card div[data-testid="stTextInput"] input {
+        border: 1px solid #E2E8F0 !important; border-radius: 12px !important;
+        background: #F8FAFC !important; padding: .68rem .9rem .68rem 2.7rem !important;
+        font-size: .95rem !important; color: #131A3D !important; min-height: 48px;
+    }
+    .login-card div[data-testid="stTextInput"] input:focus {
+        border-color: #4D7CFE !important; box-shadow: 0 0 0 3px rgba(77, 124, 254, .18) !important;
+    }
+    .login-card div[data-testid="stTextInput"]:has(+ div[data-testid="stTextInput"]) input {
+        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3C/svg%3E") !important;
+        background-repeat: no-repeat !important; background-position: .85rem center !important; background-size: 18px !important;
+    }
+    .login-card div[data-testid="stTextInput"] + div[data-testid="stTextInput"] input {
+        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='11' x='3' y='11' rx='2' ry='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 10 0v4'/%3E%3C/svg%3E") !important;
+        background-repeat: no-repeat !important; background-position: .85rem center !important; background-size: 18px !important;
+    }
+
+    /* Botão Entrar */
+    .login-card div.stButton > button[kind="primary"] {
+        background: linear-gradient(90deg, #4D7CFE 0%, #3153E8 100%) !important;
+        border: none !important; border-radius: 12px !important;
+        padding: .8rem 1rem !important; font-weight: 700 !important; font-size: .98rem !important;
+        color: #FFFFFF !important; width: 100%; transition: filter .2s ease !important;
+    }
+    .login-card div.stButton > button[kind="primary"]:hover { filter: brightness(1.1); }
+    .login-card div.stButton > button[kind="primary"]:disabled { background: #CBD5E1 !important; }
+
+    /* Mensagens de erro dentro do cartão */
+    .login-card [data-testid="stAlert"] { border-radius: 10px; }
+</style>
+"""
+
+
+def injetar_css_login():
+    """CSS exclusivo da tela de login (injetado antes do formulário renderizar)."""
+    st.markdown(LOGIN_CSS, unsafe_allow_html=True)
+
+
+
+# ---------------------------------------------------------------------------
 # ÍCONES LUCIDE SVG INLINE
 # ---------------------------------------------------------------------------
 _LUCIDE = {
@@ -178,27 +249,13 @@ def icone(nome: str, tamanho: int = 18, cor: str = None) -> str:
 # FAIXA DO CABEÇALHO (identidade do hospital)
 # ---------------------------------------------------------------------------
 def barra_cabecalho():
-    logo_html = ""
-    for nome_logo in ("Logo_Hias.png", "logo_topo_Israelita.jpg"):
-        caminho_logo = os.path.join(PASTA_RAIZ, nome_logo)
-        if os.path.exists(caminho_logo):
-            with open(caminho_logo, "rb") as f:
-                logo_b64 = base64.b64encode(f.read()).decode()
-            mime = "image/png" if nome_logo.lower().endswith(".png") else "image/jpeg"
-            logo_html = f'<img src="data:{mime};base64,{logo_b64}" width="180" style="display:block;">'
-            break
-
-    # Compensador de largura do logo mantém o título realmente centralizado na barra
-    espacador = '<div class="brand-spacer"></div>' if logo_html else ""
-
-    st.markdown(f"""
+    # Sistema de uso particular: sem logotipos nem identidade do hospital.
+    st.markdown("""
     <div class="brand-bar">
-        <div class="brand-logo">{logo_html}</div>
         <div class="brand-text">
             <div class="brand-title">Atualização da Posição Financeira</div>
-            <p class="brand-sub">Integração automática WPD-26 + Não Identificado → Hias</p>
+            <p class="brand-sub">Integração automática WPD-26 + Não Identificado</p>
         </div>
-        {espacador}
     </div>
     """, unsafe_allow_html=True)
 

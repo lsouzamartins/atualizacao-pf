@@ -28,8 +28,8 @@ from ui_comum import injetar_css, barra_cabecalho
 # CONFIGURAÇÃO DA PÁGINA STREAMLIT
 # ==============================================================================
 st.set_page_config(
-    page_title="Atualização PF · Hias",
-    page_icon="🏥",
+    page_title="Atualização PF",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
