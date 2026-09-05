@@ -133,11 +133,17 @@ class CachePivot:
 
     def substituir_strings(self, campo: str, mapeamento: dict) -> bool:
         """Reescreve <s v="..."/> no LUGAR (índices estáveis — os records não
-        mudam). Usado quando a planilha normaliza nomes (ex.: tira espaços)."""
+        mudam). Usado quando a planilha normaliza nomes (ex.: tira espaços).
+        Se o valor novo já existir em OUTRO item do campo (ex.: item não usado
+        u="1" herdado da base), a entrada é pulada — o Excel repara caches com
+        valores duplicados no sharedItems, mas tolera padding."""
         mudou = False
+        itens_campo = self._campos[campo].itens
         for antigo, novo in mapeamento.items():
             if novo == antigo:
                 continue
+            if any(t == "s" and v == novo and v != antigo for t, v in itens_campo):
+                continue  # preserva a unicidade: duplicata quebraria o cache
             antigo_x = _escape_attr(antigo)
             novo_x = _escape_attr(novo)
             m = re.search(r'<cacheField name="' + re.escape(campo) + r'"[^>]*>.*?</cacheField>',
@@ -149,10 +155,9 @@ class CachePivot:
             if bloco_novo != bloco:
                 self._def = self._def[:m.start()] + bloco_novo + self._def[m.end():]
                 mudou = True
-        if mudou:  # mantém a memória coerente com o def reescrito
-            for i, (t, v) in enumerate(self._campos[campo].itens):
-                if t == "s" and v in mapeamento:
-                    self._campos[campo].itens[i] = (t, mapeamento[v])
+                for i, (t, v) in enumerate(itens_campo):
+                    if t == "s" and v == antigo:
+                        itens_campo[i] = (t, novo)
         return mudou
 
     # -- records --------------------------------------------------------------

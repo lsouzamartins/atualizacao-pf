@@ -143,6 +143,22 @@ def test_substituir_strings_no_lugar_indices_estaveis():
     assert 'recordCount="1"' in definicao
 
 
+def test_substituir_strings_preserva_unicidade_contra_item_nao_usado():
+    """Anatomia real do cache BD2: item usado com padding e item não usado
+    (u="1") com o MESMO nome sem padding. A substituição não pode tornar os
+    valores idênticos — o Excel repara caches com valores duplicados no
+    sharedItems (causa raiz do aviso de reparo de 05/09)."""
+    com_padding = "AMAFRERJ" + " " * 35
+    campos = ['<cacheField name="Convênio" numFmtId="0"><sharedItems count="2">'
+              f'<s v="{com_padding}"/><s v="AMAFRERJ" u="1"/></sharedItems></cacheField>']
+    cache = pc.CachePivot(_def(campos), _records(['<x v="0"/>']))
+    cache.substituir_strings("Convênio", {com_padding: "AMAFRERJ"})
+    definicao, registros = cache.para_xml()
+    valores = re.findall(r'<s v="([^"]*)"', definicao)
+    assert len(valores) == len(set(valores))    # unicidade preservada
+    assert '<x v="0"/>' in registros            # índice estável
+
+
 # ==============================================================================
 # Timeline "Entrega"
 # ==============================================================================
