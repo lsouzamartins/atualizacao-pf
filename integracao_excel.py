@@ -3,8 +3,10 @@ INTEGRAÇÃO CIRÚRGICA DO EXCEL — ATUALIZAÇÃO PF · NUVEM
 ==============================================================================
 Substitui o motor COM (Windows) e o motor UNO (reprovado no spike — R24):
 edita apenas as partes XML de BD1/BD2 dentro do .xlsx (que é um zip),
-preservando pivôs/slicers/timelines byte a byte, e marca as 4 pivôs com
-refreshOnLoad="1" para o Excel atualizá-las ao abrir o arquivo.
+preservando pivôs/slicers/timelines byte a byte, e regenera os caches
+embutidos das pivôs (pivot_cache.py) com os dados finais + os estados de
+timeline/slicer do arquivo de referência — SEM refreshOnLoad (as pivôs
+renderizam dos caches, de forma determinística, como no pendrive).
 
 O arquivo Hias NUNCA é salvo pelo openpyxl (isso destruiria pivôs/slicers —
 ver notas-spike-libreoffice.md). O openpyxl aqui só LÊ (gate de validação).
@@ -16,15 +18,18 @@ Contrato público (consumido por integracao_runner.py):
                                xlsx_hias_final, pasta_raiz, pasta_saida,
                                xlsx_wpd_limpo) -> None
 =============================================================================="""
+import calendar
 import numbers
 import os
 import re
 import shutil
 import zipfile
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from xml.etree import ElementTree as ET
 
 import pandas as pd
+
+import pivot_cache as pc
 
 # ------------------------------------------------------------------------------
 # Constantes da anatomia do arquivo Hias (task-4-investigacao.md)
@@ -206,10 +211,15 @@ def _partes_de(caminho: str) -> dict[str, str]:
         nomes = set(z.namelist())
         partes = {n: z.read(n).decode("utf-8") for n in NOMES_PARTES if n in nomes}
         # o Excel pode renumerar as partes de pivot cache ao salvar (caso real
-        # de 02/09/2026: definition1↔definition2) — inclui todas as existentes
-        # para a seleção por conteúdo em _parte_cache_bd2
+        # de 02/09/2026: definition1↔definition2) — inclui todas as famílias de
+        # pivô para a seleção por conteúdo (FASE 3c / pivot_cache.py)
+        familias = [r"xl/pivotCache/pivotCacheDefinition\d+\.xml",
+                    r"xl/pivotCache/pivotCacheRecords\d+\.xml",
+                    r"xl/pivotCache/_rels/pivotCacheDefinition\d+\.xml\.rels",
+                    r"xl/timelineCaches/timelineCache\d+\.xml",
+                    r"xl/slicerCaches/slicerCache\d+\.xml"]
         partes.update({n: z.read(n).decode("utf-8") for n in nomes
-                       if re.fullmatch(r"xl/pivotCache/pivotCacheDefinition\d+\.xml", n)})
+                       if any(re.fullmatch(f, n) for f in familias)})
         return partes
 
 
@@ -375,19 +385,27 @@ def _linha_bd2(num_linha: int, convenio: str, data_serial: int,
     return f'<row r="{num_linha}">{"".join(cels)}</row>'
 
 
-def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | None, int | None, int]:
+def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | None, int | None, int, dict, int]:
     """(1) deleta as linhas >= 806 (bloco obsoleto); (2) normaliza a coluna A
     (tira o preenchimento de espaços, sincronizando sharedStrings); (3) anexa o
     bloco novo a partir da linha 806; (4) atualiza a dimension.
-    Retorna (xml_novo, fim_novo, células t="s" novas) ou (None, None, 0)."""
+    Retorna (xml_novo, fim_novo, células t="s" novas, mapeamento da
+    normalização, nº de linhas obsoletas removidas) ou (None, None, 0, {}, 0).
+    O mapeamento {original: limpo} permite à FASE 3c renormalizar o cache
+    embutido da BD2 no lugar; o nº de obsoletas é o drop exato dos records
+    obsoletos do cache (equivalente, no arquivo real, a n_registros − história
+    com história = min(fim, LINHA_CORTE_BD2 − 1) − 1)."""
     fim_atual = _ultima_linha(xml_bd2)
     fim_util = min(fim_atual, LINHA_CORTE_BD2 - 1)
     mudou = False
+    mapeamento = {}
+    n_obsoletas = 0
 
     def _remover_obsoletas(m):
-        nonlocal mudou
+        nonlocal mudou, n_obsoletas
         if int(m.group(1)) >= LINHA_CORTE_BD2:
             mudou = True
+            n_obsoletas += 1
             return ""
         return m.group(0)
 
@@ -406,6 +424,7 @@ def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | 
         if limpo == original:
             return m.group(0)
         novo = strings.obter_indice(limpo)
+        mapeamento[original] = limpo
         cel_nova = cel.group(0).replace(f"<v>{cel.group(1)}</v>", f"<v>{novo}</v>")
         mudou = True
         return f'<row r="{num}"{m.group(2)}>{m.group(3).replace(cel.group(0), cel_nova, 1)}</row>'
@@ -426,11 +445,11 @@ def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | 
         novo_fim = fim_util
 
     if not mudou:
-        return None, None, 0
+        return None, None, 0, {}, 0
     texto = _substituir_ou_falhar(
         r'<dimension ref="A1:J(\d+)"/>',
         f'<dimension ref="A1:J{novo_fim}"/>', texto, "dimension da BD2")
-    return texto, novo_fim, novas_celulas
+    return texto, novo_fim, novas_celulas, mapeamento, n_obsoletas
 
 
 # ==============================================================================
@@ -462,13 +481,241 @@ def _parte_cache_bd2(partes: dict) -> str | None:
     return None
 
 
-def _marcar_refresh_on_load(xml: str) -> str:
-    """Marca refreshOnLoad="1" na raiz de uma pivotTableDefinition
-    (o Excel atualiza a pivô ao abrir; não pode duplicar o atributo)."""
-    if "refreshOnLoad" in xml:
-        raise ValueError("refreshOnLoad já presente — não deve duplicar")
-    return re.sub(r'(<pivotTableDefinition\b[^>]*?)(/?>)',
-                  r'\1 refreshOnLoad="1"\2', xml, count=1)
+# ==============================================================================
+# FASE 3c — caches embutidos + timeline + slicers (pivot_cache.py)
+# ==============================================================================
+def _janela_entrega(hoje: date | None = None) -> tuple[date, date]:
+    """Janela da timeline "Entrega": o mês de FECHAMENTO (mês anterior ao da
+    geração). O arquivo de referência de 03/09/2026 usa agosto/2026 mesmo
+    contendo entregas de 01–03/09 — a janela segue o calendário, não os dados."""
+    hoje = hoje or date.today()
+    if hoje.month > 1:
+        ano, mes = hoje.year, hoje.month - 1
+    else:
+        ano, mes = hoje.year - 1, 12
+    return date(ano, mes, 1), date(ano, mes, calendar.monthrange(ano, mes)[1])
+
+
+def _iso_cache(v: date | None) -> str | None:
+    """Data no formato dos <d v> dos caches (ISO + T00:00:00)."""
+    return f"{v.isoformat()}T00:00:00" if v is not None else None
+
+
+def _x_ref(cache: pc.CachePivot, campo: str, tipo: str, valor) -> str:
+    return f'<x v="{cache.obter_indice(campo, tipo, valor)}"/>'
+
+
+def _x_ref_ou_blank(cache: pc.CachePivot, campo: str, tipo: str, valor) -> str:
+    """valor None → x-ref do item em branco (se o campo o tiver) ou <m/> inline."""
+    if valor is None:
+        if cache.tem_blank(campo):
+            return f'<x v="{cache.obter_indice(campo, "m", None)}"/>'
+        return "<m/>"
+    return _x_ref(cache, campo, tipo, valor)
+
+
+def _n_inline(v) -> str:
+    return f'<n v="{_numero(v)}"/>' if v is not None else "<m/>"
+
+
+def _d_inline(v: date | None) -> str:
+    return f'<d v="{_iso_cache(v)}"/>' if v is not None else "<m/>"
+
+
+def _record_bd1(dados: dict, cache: pc.CachePivot, hoje: date) -> str:
+    """Um <r> de 22 entradas para o cache da BD1, no formato exato do Excel
+    (referência 03/09): Remessa/Protocolo/Vencimento/Entrega/Baixa/Convênio/
+    Tipo x-ref; Emissão <d> inline; NF <m/>; demais <n> inline. Os campos
+    calculados (17–20) são avaliados aqui com TODAY() = data de geração."""
+    remessa = dados["Remessa"]
+    recurso = str(remessa).strip().endswith("(R)")
+    if pd.api.types.is_number(remessa):
+        numero = int(remessa) if float(remessa).is_integer() else float(remessa)
+        e_remessa = _x_ref(cache, "Remessa", "n", _numero(numero))
+    else:
+        e_remessa = _x_ref(cache, "Remessa", "s", str(remessa))
+    protocolo = dados["Protocolo"]
+    e_protocolo = (_x_ref(cache, "Protocolo", "s", protocolo)
+                   if isinstance(protocolo, str)
+                   else _x_ref_ou_blank(cache, "Protocolo", "n", _numero(protocolo)))
+    convenio = "" if dados["Convênio"] is None else str(dados["Convênio"])
+    vlr_guia = dados["Vlr Guia"]
+    vencimento = dados["Vencimento"]
+    baixa = dados["Baixa"]
+    # fórmulas R–V da planilha, avaliadas para o record do cache:
+    atrasado = ((vlr_guia or 0) if (vencimento is not None and vencimento < hoje
+                                    and baixa is None) else 0)
+    a_vencer = ((vlr_guia or 0) if (vencimento is not None and vencimento > hoje
+                                    and baixa is None) else 0)
+    recurso_v = (vlr_guia or 0) if recurso else 0
+    recurso_pago = (dados["Valor Pago"] or 0) if recurso_v != 0 else 0
+    entradas = [
+        e_remessa,                                                             # 0
+        e_protocolo,                                                           # 1
+        _d_inline(dados["Emissão"]),                                           # 2
+        _x_ref_ou_blank(cache, "Vencimento", "d", _iso_cache(vencimento)),     # 3
+        _x_ref_ou_blank(cache, "Entrega", "d", _iso_cache(dados["Entrega"])),  # 4
+        _x_ref_ou_blank(cache, "Baixa", "d", _iso_cache(baixa)),               # 5
+        "<m/>",                                                                # 6 NF
+        _x_ref(cache, "Convênio", "s", convenio),                              # 7
+        _n_inline(dados["Faturado"]),                                          # 8
+        _n_inline(dados["Valor Pago"]),                                        # 9
+        _n_inline(dados["Valor ISS"]),                                         # 10
+        _n_inline(vlr_guia),                                                   # 11
+        _n_inline(dados["% Pré-glosa"]),                                       # 12
+        _n_inline(dados["Valor Glosa"]),                                       # 13
+        _n_inline(dados["% Glosa"]),                                           # 14
+        _n_inline(dados["Atraso"]),                                            # 15
+        _n_inline(dados["Faturas"]),                                           # 16
+        _n_inline(atrasado),                                                   # 17
+        _n_inline(a_vencer),                                                   # 18
+        _n_inline(recurso_v),                                                  # 19
+        _n_inline(recurso_pago),                                               # 20
+        _x_ref(cache, "Tipo de remessa", "s",
+               "Recurso" if recurso else "Comum"),                             # 21
+    ]
+    return "<r>" + "".join(entradas) + "</r>"
+
+
+def _record_bd2(item: dict, cache: pc.CachePivot) -> str:
+    """Um <r> de 9 entradas para o cache da BD2: Convênio/Data x-ref,
+    valores <n> inline (formato do Excel na referência 03/09)."""
+    data_iso = (SERIAL_EPOCA + timedelta(days=item["data"])).isoformat() + "T00:00:00"
+    entradas = [
+        _x_ref(cache, "Convênio", "s", item["convenio"]),
+        _x_ref(cache, "Data", "d", data_iso),
+    ] + [_n_inline(v) for v in item["valores"]]
+    return "<r>" + "".join(entradas) + "</r>"
+
+
+def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
+             bloco: list[dict] | None, mapeamento_bd2: dict,
+             fim_bd1_novo: int | None, fim_bd2_novo: int | None,
+             n_obsoletas_bd2: int) -> None:
+    """Regenera os caches embutidos (BD1/BD2) com os dados finais e grava os
+    estados de timeline/slicer/pivô do arquivo de referência — determinístico
+    a cada rodada (sem depender de o Excel recalcular ao abrir)."""
+    hoje = date.today()
+    nome_def_bd1 = pc.parte_cache_bd1(partes)
+    nome_def_bd2 = pc.parte_cache_bd2(partes)
+    nome_rec_bd1 = pc.nome_da_rel(partes, nome_def_bd1)
+    nome_rec_bd2 = pc.nome_da_rel(partes, nome_def_bd2)
+    cache_bd1 = pc.CachePivot(partes[nome_def_bd1], partes[nome_rec_bd1])
+    # a FASE 3b pode já ter atualizado o worksheetSource do def da BD2
+    cache_bd2 = pc.CachePivot(substituicoes.get(nome_def_bd2, partes[nome_def_bd2]),
+                              partes[nome_rec_bd2])
+    n_inicial_bd2 = cache_bd2.n_registros
+
+    # -- BD1: um record por remessa nova (mesma ordem das linhas da planilha) --
+    if novas is not None and len(novas):
+        cache_bd1.anexar_registros(
+            [_record_bd1(_converter_linha_wpd(linha), cache_bd1, hoje)
+             for _, linha in novas.iterrows()])
+
+    # -- BD2: drop dos records do bloco obsoleto + records do bloco novo +
+    # normalização dos convênios — só quando a FASE 3b mexeu na planilha.
+    if fim_bd2_novo is not None:
+        if cache_bd2.n_registros < n_obsoletas_bd2:
+            raise RuntimeError(
+                f"cache da BD2 ({cache_bd2.n_registros} records) menor que o "
+                f"bloco obsoleto removido ({n_obsoletas_bd2}) — cache inconsistente")
+        cache_bd2.remover_registros_finais(n_obsoletas_bd2)
+        if mapeamento_bd2:
+            cache_bd2.substituir_strings("Convênio", mapeamento_bd2)
+        if bloco:
+            cache_bd2.anexar_registros([_record_bd2(b, cache_bd2) for b in bloco])
+
+    # -- timeline "Entrega" = mês de fechamento --
+    inicio, fim = _janela_entrega(hoje)
+    nome_timeline = pc.parte_timeline_entrega(partes)
+    substituicoes[nome_timeline] = pc.editar_timeline(partes[nome_timeline], inicio, fim)
+
+    # -- slicer "Tipo de remessa" (Data Entrega) = só Comum --
+    nome_slicer_tipo = pc.parte_slicer_tipo_data_entrega(partes)
+    substituicoes[nome_slicer_tipo] = pc.selecionar_slicer_tipo_remessa(
+        partes[nome_slicer_tipo])
+
+    # -- slicers "Convênio": novos itens entram marcados (BD1→tabs 3/6/11; BD2→tab 8) --
+    novos_conv_bd1 = cache_bd1.novos_indices("Convênio")
+    novos_conv_bd2 = cache_bd2.novos_indices("Convênio")
+    for nome in pc.partes_slicer_convenio(partes, [3, 6, 11]):
+        if novos_conv_bd1:
+            substituicoes[nome] = pc.anexar_itens_slicer(partes[nome], novos_conv_bd1)
+    for nome in pc.partes_slicer_convenio(partes, [8]):
+        if novos_conv_bd2:
+            substituicoes[nome] = pc.anexar_itens_slicer(partes[nome], novos_conv_bd2)
+
+    # -- pivôs 1–3 (cache BD1): itens novos por campo; convênios colapsados --
+    novos_por_campo_bd1 = cache_bd1.novos_por_campo()
+    for i in (1, 2, 3):
+        nome = f"xl/pivotTables/pivotTable{i}.xml"
+        xml = pc.remover_refresh_on_load(partes[nome])
+        for idx, nome_campo in enumerate(cache_bd1.campos_ordenados()):
+            if nome_campo not in novos_por_campo_bd1 or not pc.campo_tem_itens(xml, idx):
+                continue
+            com_sd = nome_campo == "Convênio"
+            xml = pc.anexar_itens_pivot(xml, idx, novos_por_campo_bd1[nome_campo],
+                                        com_sd=com_sd)
+            if com_sd:
+                xml = pc.colapsar_itens_pivot(xml, idx)
+        substituicoes[nome] = xml
+
+    # -- pivot1: esconde Recurso (x=1) e vazio (x=2) no campo 21 (Tipo) --
+    nome_p1 = "xl/pivotTables/pivotTable1.xml"
+    xml_p1 = substituicoes[nome_p1]
+    if pc.campo_tem_itens(xml_p1, 21):
+        substituicoes[nome_p1] = pc.esconder_itens_pivot(xml_p1, 21, [1, 2])
+
+    # -- pivô 4 (À Quitar, cache BD2): campos 0 (Convênio) e 1 (Data) --
+    nome_p4 = "xl/pivotTables/pivotTable4.xml"
+    xml_p4 = pc.remover_refresh_on_load(partes[nome_p4])
+    novos_por_campo_bd2 = cache_bd2.novos_por_campo()
+    for idx, nome_campo in enumerate(cache_bd2.campos_ordenados()):
+        if nome_campo not in novos_por_campo_bd2 or not pc.campo_tem_itens(xml_p4, idx):
+            continue
+        com_sd = nome_campo == "Convênio"
+        xml_p4 = pc.anexar_itens_pivot(xml_p4, idx, novos_por_campo_bd2[nome_campo],
+                                       com_sd=com_sd)
+        if com_sd:
+            xml_p4 = pc.colapsar_itens_pivot(xml_p4, idx)
+    substituicoes[nome_p4] = xml_p4
+
+    # -- grava os caches regenerados --
+    substituicoes[nome_def_bd1], substituicoes[nome_rec_bd1] = cache_bd1.para_xml()
+    substituicoes[nome_def_bd2], substituicoes[nome_rec_bd2] = cache_bd2.para_xml()
+
+    esperado_bd2 = (n_inicial_bd2 - n_obsoletas_bd2 + len(bloco or [])
+                    if fim_bd2_novo is not None else None)
+    _validar_pivos(substituicoes, partes, cache_bd1, cache_bd2,
+                   fim_bd1_novo, esperado_bd2)
+
+
+def _validar_pivos(substituicoes: dict, partes: dict, cache_bd1: pc.CachePivot,
+                   cache_bd2: pc.CachePivot, fim_bd1_novo: int | None,
+                   esperado_bd2: int | None) -> None:
+    """Gate pré-gravação: os estados críticos têm de estar como o esperado —
+    aborta ANTES de escrever uma saída errada."""
+    erros = []
+    for i in (1, 2, 3, 4):
+        xml = substituicoes.get(f"xl/pivotTables/pivotTable{i}.xml")
+        if xml is not None and "refreshOnLoad" in xml:
+            erros.append(f"pivotTable{i} ainda contém refreshOnLoad")
+    tl = substituicoes.get(pc.parte_timeline_entrega(partes))
+    if tl is not None and ('filterType="dateBetween"' not in tl or "<selection" not in tl):
+        erros.append("timeline Entrega sem dateBetween/selection")
+    st = substituicoes.get(pc.parte_slicer_tipo_data_entrega(partes))
+    if st is not None:
+        selecionados = re.findall(r'<i x="(\d+)" s="1"', st)
+        if selecionados != ["0"]:
+            erros.append(f"slicer Tipo de remessa com seleção inesperada: {selecionados}")
+    if fim_bd1_novo is not None and cache_bd1.n_registros != fim_bd1_novo - 1:
+        erros.append(f"cache BD1 com {cache_bd1.n_registros} records ≠ planilha "
+                     f"({fim_bd1_novo - 1} linhas de dados)")
+    if esperado_bd2 is not None and cache_bd2.n_registros != esperado_bd2:
+        erros.append(f"cache BD2 com {cache_bd2.n_registros} records ≠ esperado "
+                     f"({esperado_bd2} = inicial − obsoletas + bloco novo)")
+    if erros:
+        raise RuntimeError("Falha no gate dos pivôs: " + "; ".join(erros))
 
 
 def _ajustar_workbook(xml: str, fim_bd1_novo: int | None, calc_completo: bool) -> str:
@@ -563,11 +810,15 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
         print(f"[FASE 3] BD1: {len(novas)} remessa(s) anexada(s) — fim {fim_bd1_novo}.")
 
     # ---- FASE 3b: BD2 — bloco novo do Não Identificado (R5: tolera limpo=None) ----
+    bloco = None
+    mapeamento_bd2 = {}
+    fim_bd2_novo = None
+    n_obsoletas_bd2 = 0
     if xlsx_nao_identificado_limpo is not None:
         bloco = _bloco_bd2(xlsx_nao_identificado_limpo)
         resultado = _editar_bd2(partes["xl/worksheets/sheet6.xml"], bloco, strings)
         if resultado[0] is not None:
-            xml_bd2, fim_bd2_novo, refs = resultado
+            xml_bd2, fim_bd2_novo, refs, mapeamento_bd2, n_obsoletas_bd2 = resultado
             substituicoes["xl/worksheets/sheet6.xml"] = xml_bd2
             novas_celulas += refs
             substituicoes["xl/tables/table2.xml"] = _ajustar_tabela(
@@ -586,14 +837,15 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
     else:
         print("[FASE 3] BD2: integração pulada (limpo não informado).")
 
-    # ---- FASE 4: gravação ----
+    # ---- FASE 3c: caches embutidos + timeline + slicers ----
     mudou_alguma_coisa = ("xl/worksheets/sheet5.xml" in substituicoes
                           or "xl/worksheets/sheet6.xml" in substituicoes)
     if mudou_alguma_coisa:
-        for i in range(1, 5):
-            nome = f"xl/pivotTables/pivotTable{i}.xml"
-            if nome in partes:
-                substituicoes[nome] = _marcar_refresh_on_load(partes[nome])
+        _fase_3c(partes, substituicoes, novas, bloco, mapeamento_bd2,
+                 fim_bd1_novo, fim_bd2_novo, n_obsoletas_bd2)
+
+    # ---- FASE 4: gravação ----
+    if mudou_alguma_coisa:
         substituicoes["docProps/core.xml"] = _ajustar_core(partes["docProps/core.xml"])
         substituicoes["xl/sharedStrings.xml"] = strings.para_xml(novas_celulas=novas_celulas)
     if houve_mudanca_bd1:

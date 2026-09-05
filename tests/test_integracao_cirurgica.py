@@ -1,10 +1,13 @@
 """Testes do motor cirúrgico integracao_excel.py.
 
 A fixture base é um .xlsx SINTÉTICO escrito à mão (partes XML em dict),
-reproduzindo a anatomia do arquivo real (sharedStrings + tabelas + calcPr
-sem fullCalcOnLoad). O openpyxl nunca grava o Hias real — aqui ele só LÊ
-(fixture e gate), e os arquivos WPD/limpo sintéticos podem usar pandas.
+reproduzindo a anatomia do arquivo real: sharedStrings + tabelas + calcPr
+sem fullCalcOnLoad + caches embutidos (defs/records/rels) + timelines +
+slicerCaches + pivotFields posicionais. O openpyxl nunca grava o Hias real —
+aqui ele só LÊ (fixture e gate), e os arquivos WPD/limpo sintéticos podem
+usar pandas.
 """
+import re
 import zipfile
 from datetime import date, datetime
 
@@ -129,13 +132,15 @@ XML_BD2_MINI = (
 
 def test_editar_bd2_deleta_obsoletas_normaliza_e_insere():
     s = ie._StringsCompartilhadas(_sst(["CABEÇALHO", "Convênio ", "OBJETO"]))
-    xml, fim, novas_celulas = ie._editar_bd2(
+    xml, fim, novas_celulas, mapeamento, n_obsoletas = ie._editar_bd2(
         XML_BD2_MINI,
         [{"convenio": "Convênio", "data": 45001,
           "valores": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]}],
         s)
     assert fim == 806
     assert novas_celulas == 1
+    assert n_obsoletas == 2
+    assert mapeamento == {"Convênio ": "Convênio"}
     # obsoletas removidas
     assert '<c r="A806" s="5"' not in xml
     assert '<c r="A808"' not in xml
@@ -161,24 +166,14 @@ def test_editar_bd2_sem_mudanca_devolve_none():
                  + '</sheetData>'
                  + '</worksheet>')
     s = ie._StringsCompartilhadas(_sst(["CABEÇALHO", "Convênio"]))
-    xml, fim, n = ie._editar_bd2(xml_limpo, None, s)
+    xml, fim, n, mapeamento, n_obsoletas = ie._editar_bd2(xml_limpo, None, s)
     assert xml is None and fim is None and n == 0
+    assert mapeamento == {} and n_obsoletas == 0
 
 
 # ==============================================================================
 # Partes auxiliares
 # ==============================================================================
-def test_marcar_refresh_on_load_nas_pivots():
-    xml = (DECL
-           + '<pivotTableDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
-           + 'name="Tabela dinâmica1" cacheId="3" applyNumberFormats="0">'
-           + '<location ref="A1:B5" firstHeaderRow="1"/></pivotTableDefinition>')
-    saida = ie._marcar_refresh_on_load(xml)
-    assert 'refreshOnLoad="1"' in saida
-    with pytest.raises(ValueError):
-        ie._marcar_refresh_on_load(saida)  # não duplicar
-
-
 def test_ajustar_cache1_ref_atualizado():
     xml = (DECL
            + '<pivotCacheDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
@@ -235,10 +230,50 @@ def test_substituir_ou_falhar_com_casamento_substitui():
 # ==============================================================================
 # Integração completa (fixture sintética escrita à mão)
 # ==============================================================================
+def _pivot_campos_bd1():
+    """22 pivotFields posicionais (índice = posição no cache da BD1).
+    Campos com <items>: 0 Remessa, 1 Protocolo, 3 Vencimento, 4 Entrega,
+    5 Baixa, 7 Convênio, 21 Tipo (com missing m=1 e default, como o Excel)."""
+    simples = '<pivotField showAll="0"/>'
+    campos = []
+    for i in range(22):
+        if i == 5:
+            campos.append('<pivotField axis="axisRow" showAll="0">'
+                          '<items count="2"><item x="0"/><item x="1"/></items>'
+                          '</pivotField>')
+        elif i == 21:
+            campos.append('<pivotField axis="axisRow" showAll="0">'
+                          '<items count="4"><item x="0"/><item x="1"/>'
+                          '<item m="1" x="2"/><item t="default"/></items>'
+                          '</pivotField>')
+        elif i in (0, 1, 3, 4, 7):
+            campos.append('<pivotField axis="axisRow" showAll="0">'
+                          '<items count="1"><item x="0"/></items></pivotField>')
+        else:
+            campos.append(simples)
+    return "".join(campos)
+
+
+def _pivot_campos_bd2():
+    """9 pivotFields da pivô À Quitar (cache BD2): 0 Convênio e 1 Data com items."""
+    simples = '<pivotField showAll="0"/>'
+    campos = []
+    for i in range(9):
+        if i in (0, 1):
+            campos.append('<pivotField axis="axisRow" showAll="0">'
+                          '<items count="1"><item x="0"/></items></pivotField>')
+        else:
+            campos.append(simples)
+    return "".join(campos)
+
+
 def _criar_base(tmp_path, sem_dimension_bd2=False):
     """Hias sintético mínimo com a anatomia do real: BD1/BD2 + sharedStrings +
-    tabelas + calcPr sem fullCalcOnLoad. Escrito à mão porque o openpyxl
-    3.1.5 usa strings inline (o motor exige sharedStrings).
+    tabelas + calcPr sem fullCalcOnLoad + caches embutidos (defs/records/rels)
+    + 2 timelines + 7 slicerCaches + pivôs com pivotFields posicionais.
+    Escrito à mão porque o openpyxl 3.1.5 usa strings inline (o motor exige
+    sharedStrings). Os caches/pivôs nascem COM refreshOnLoad="1" (estado do
+    template da nuvem) — a FASE 3c deve removê-lo.
     sem_dimension_bd2=True gera uma BD2 sem <dimension> (fixture de falha)."""
     ser_ago = (date(2026, 8, 31) - ie.SERIAL_EPOCA).days
     ser_set = (date(2026, 9, 30) - ie.SERIAL_EPOCA).days
@@ -303,21 +338,125 @@ def _criar_base(tmp_path, sem_dimension_bd2=False):
     # no arquivo real a tabela da BD2 cobre só A1:I (a coluna J/FLAG fica fora)
     table2 = tabela(2, "Tabela1", "A1:I2", cabecalho_bd2[:9])
 
-    # pivôs sintéticas: raiz SEM refreshOnLoad (o motor deve marcá-lo no fluxo);
-    # cacheIds conforme a investigação: pivôs 1–3 = 3, pivô 4 = 2
+    # pivôs com pivotFields posicionais e refreshOnLoad="1" (estado do template
+    # da nuvem — a FASE 3c remove); cacheIds da investigação: pivôs 1–3 = 1
+    # (cache da BD1), pivô 4 = 0 (cache da BD2)
     pivots = []
-    for num, cache_id in ((1, 3), (2, 3), (3, 3), (4, 2)):
+    for num, cache_id, campos in ((1, 1, _pivot_campos_bd1()),
+                                  (2, 1, _pivot_campos_bd1()),
+                                  (3, 1, _pivot_campos_bd1()),
+                                  (4, 0, _pivot_campos_bd2())):
         pivots.append((f"xl/pivotTables/pivotTable{num}.xml",
                        DECL + f'<pivotTableDefinition {ns} name="Tabela dinâmica{num}" '
-                       + f'cacheId="{cache_id}" applyNumberFormats="0">'
+                       + f'cacheId="{cache_id}" applyNumberFormats="0" refreshOnLoad="1">'
                        + '<location ref="A1:B5" firstHeaderRow="1"/>'
+                       + f'<pivotFields count="{campos.count("<pivotField")}">{campos}</pivotFields>'
                        + '</pivotTableDefinition>'))
-    cache1 = (DECL
-              + f'<pivotCacheDefinition {ns}>'
-              + '<cacheSource type="worksheet"><worksheetSource ref="A1:I2" sheet="BD2"/></cacheSource>'
-              + '</pivotCacheDefinition>')
-    slicer1 = ('<slicer xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" '
-               'name="SegmentaçãoDeDados1"><preservar>BYTES</preservar></slicer>')
+
+    # caches embutidos: def1 = BD2 (worksheetSource ref A1:I), def2 = BD1
+    # (worksheetSource name="BD_1"); campos com sharedItems recebem x-ref nos
+    # records — os demais são auto-contidos (d/n/m inline), como no real.
+    ns_r = 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+    campos_bd1 = [
+        '<cacheField name="Remessa" numFmtId="0"><sharedItems count="1"><n v="117129"/></sharedItems></cacheField>',
+        '<cacheField name="Protocolo" numFmtId="0"><sharedItems count="1"><n v="118"/></sharedItems></cacheField>',
+        '<cacheField name="Emissão" numFmtId="14"/>',
+        '<cacheField name="Vencimento" numFmtId="14"><sharedItems count="1"><d v="2026-09-30T00:00:00"/></sharedItems></cacheField>',
+        '<cacheField name="Entrega" numFmtId="14"><sharedItems count="1"><d v="2026-08-20T00:00:00"/></sharedItems></cacheField>',
+        '<cacheField name="Baixa" numFmtId="14"><sharedItems count="2"><m/><d v="2026-08-31T00:00:00"/></sharedItems></cacheField>',
+        '<cacheField name="Nota Fiscal" numFmtId="0"/>',
+        '<cacheField name="Convênio" numFmtId="0"><sharedItems count="1"><s v="HOSPITAL ABC"/></sharedItems></cacheField>',
+    ] + [f'<cacheField name="{n}" numFmtId="0"/>' for n in (
+        "Faturado", "Valor Pago", "Valor ISS", "Vlr Guia", "% Pré-glosa",
+        "Valor Glosa", "% Glosa", "Atraso", "Faturas",
+        "Atrasado", "A vencer", "Recurso", "Recurso pago")] + [
+        '<cacheField name="Tipo de remessa" numFmtId="0">'
+        '<sharedItems count="3"><s v="Comum"/><s v="Recurso"/><m/></sharedItems></cacheField>',
+    ]
+    campos_bd2 = [
+        '<cacheField name="Convênio" numFmtId="0"><sharedItems count="1"><s v="Convênio Z "/></sharedItems></cacheField>',
+        '<cacheField name="Data" numFmtId="14"><sharedItems count="1"><d v="2026-08-31T00:00:00"/></sharedItems></cacheField>',
+    ] + [f'<cacheField name="{n}" numFmtId="0"/>' for n in (
+        "Dep Líq", "Dep Bruto", "Quitação", "Não Identificado", "Acordos",
+        "Glosa Aceita", "NI Real")]
+
+    def1 = (DECL + f'<pivotCacheDefinition {ns} {ns_r} '
+            + 'refreshedBy="Sistema" refreshedDate="46200.0" recordCount="1" '
+            + 'createdVersion="7" refreshedVersion="7" refreshOnLoad="1">'
+            + '<cacheSource type="worksheet"><worksheetSource ref="A1:I2" sheet="BD2"/></cacheSource>'
+            + f'<cacheFields count="9">{"".join(campos_bd2)}</cacheFields>'
+            + '</pivotCacheDefinition>')
+    def2 = (DECL + f'<pivotCacheDefinition {ns} {ns_r} '
+            + 'refreshedBy="Sistema" refreshedDate="46200.0" recordCount="1" '
+            + 'createdVersion="7" refreshedVersion="7" refreshOnLoad="1">'
+            + '<cacheSource type="worksheet"><worksheetSource name="BD_1"/></cacheSource>'
+            + f'<cacheFields count="22">{"".join(campos_bd1)}</cacheFields>'
+            + '</pivotCacheDefinition>')
+
+    # records iniciais espelhando as linhas 2 (formato do Excel na referência:
+    # x-ref para campos com sharedItems, d/n/m inline nos demais)
+    rec_bd1 = (DECL + f'<pivotCacheRecords {ns} {ns_r} count="1"><r>'
+               + '<x v="0"/><x v="0"/>'                          # Remessa, Protocolo
+               + '<d v="2026-08-31T00:00:00"/>'                  # Emissão inline
+               + '<x v="0"/>'                                    # Vencimento
+               + '<m/>'                                          # Entrega (sem blank)
+               + '<x v="0"/>'                                    # Baixa → blank
+               + '<m/>'                                          # NF
+               + '<x v="0"/>'                                    # Convênio
+               + '<n v="100"/><n v="100"/><n v="5"/><n v="100"/>'
+               + '<n v="0"/><n v="0"/><n v="0"/><n v="0"/><n v="1"/>'
+               + '<n v="0"/><n v="100"/><n v="0"/><n v="0"/>'    # R–U calculadas
+               + '<x v="0"/>'                                    # Tipo (Comum)
+               + '</r></pivotCacheRecords>')
+    rec_bd2 = (DECL + f'<pivotCacheRecords {ns} {ns_r} count="1"><r>'
+               + '<x v="0"/><x v="0"/>'                          # Convênio, Data
+               + '<n v="1"/><n v="2"/><n v="3"/><n v="4"/>'
+               + '<n v="5"/><n v="6"/><n v="7"/>'
+               + '</r></pivotCacheRecords>')
+
+    def rels_def(n_rec):
+        return (DECL
+                + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                + '<Relationship Id="rId1" '
+                + 'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheRecords" '
+                + f'Target="pivotCacheRecords{n_rec}.xml"/></Relationships>')
+
+    # timeline "Entrega" (tabId 3) com filterType="unknown" — a FASE 3c fixa a
+    # janela do mês de fechamento; "Vencimento" (tabId 6) fica intocada.
+    ns9 = 'xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"'
+    timeline1 = (DECL + f'<timelineCache {ns9} {ns_r} sourceName="Entrega" name="TimelineEntrega1">'
+                 + '<pivotTables><pivotTable tabId="3" name="Data Entrega"/></pivotTables>'
+                 + '<state filterType="unknown" startDate="2024-01-01T00:00:00" '
+                 + 'endDate="2027-01-01T00:00:00">'
+                 + '<bounds startDate="2024-01-01T00:00:00" endDate="2027-01-01T00:00:00"/>'
+                 + '</state></timelineCache>')
+    timeline2 = (DECL + f'<timelineCache {ns9} {ns_r} sourceName="Vencimento" name="TimelineVencimento2">'
+                 + '<pivotTables><pivotTable tabId="6" name="Data Vencimento"/></pivotTables>'
+                 + '<state filterType="unknown" startDate="2024-01-01T00:00:00" '
+                 + 'endDate="2027-01-01T00:00:00">'
+                 + '<bounds startDate="2024-01-01T00:00:00" endDate="2027-01-01T00:00:00"/>'
+                 + '</state></timelineCache>')
+
+    # 7 slicerCaches na ordem da referência: 1 Convênio tab3, 2 Convênio tab6,
+    # 3 Tipo tab3, 4 Tipo tab11, 5 Convênio tab11, 6 Tipo tab6, 7 Convênio tab8
+    def slicer(nome, tab_id, fonte, n_itens):
+        itens = "".join(f'<i x="{i}" s="1"/>' for i in range(n_itens))
+        return (DECL + f'<slicerCache {ns9} sourceName="{fonte}" name="SegmentaçãoDeDados{nome}">'
+                + f'<pivotTables><pivotTable tabId="{tab_id}" name="Pivot{tab_id}"/></pivotTables>'
+                + f'<items count="{n_itens}">{itens}</items></slicerCache>')
+
+    slicers = {
+        "xl/slicerCaches/slicerCache1.xml": slicer(1, 3, "Convênio", 1),
+        "xl/slicerCaches/slicerCache2.xml": slicer(2, 6, "Convênio", 1),
+        "xl/slicerCaches/slicerCache3.xml": slicer(3, 3, "Tipo de remessa", 3),
+        "xl/slicerCaches/slicerCache4.xml": slicer(4, 11, "Tipo de remessa", 3),
+        "xl/slicerCaches/slicerCache5.xml": slicer(5, 11, "Convênio", 1),
+        "xl/slicerCaches/slicerCache6.xml": slicer(6, 6, "Tipo de remessa", 3),
+        "xl/slicerCaches/slicerCache7.xml": slicer(7, 8, "Convênio", 1),
+    }
+
+    slicer_view = ('<slicer xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" '
+                   'name="SegmentaçãoDeDados1"><preservar>BYTES</preservar></slicer>')
 
     workbook = (DECL
                 + f'<workbook {ns} xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
@@ -372,7 +511,6 @@ def _criar_base(tmp_path, sem_dimension_bd2=False):
                      + '<Override PartName="/xl/pivotTables/pivotTable2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml"/>'
                      + '<Override PartName="/xl/pivotTables/pivotTable3.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml"/>'
                      + '<Override PartName="/xl/pivotTables/pivotTable4.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml"/>'
-                     + '<Override PartName="/xl/pivotCache/pivotCacheDefinition1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml"/>'
                      + '<Override PartName="/xl/slicers/slicer1.xml" ContentType="application/vnd.ms-excel.slicer+xml"/>'
                      + '</Types>')
 
@@ -408,8 +546,16 @@ def _criar_base(tmp_path, sem_dimension_bd2=False):
         "xl/tables/table1.xml": table1,
         "xl/tables/table2.xml": table2,
         **dict(pivots),
-        "xl/pivotCache/pivotCacheDefinition1.xml": cache1,
-        "xl/slicers/slicer1.xml": slicer1,
+        "xl/pivotCache/pivotCacheDefinition1.xml": def1,
+        "xl/pivotCache/pivotCacheDefinition2.xml": def2,
+        "xl/pivotCache/pivotCacheRecords1.xml": rec_bd2,
+        "xl/pivotCache/pivotCacheRecords2.xml": rec_bd1,
+        "xl/pivotCache/_rels/pivotCacheDefinition1.xml.rels": rels_def(1),
+        "xl/pivotCache/_rels/pivotCacheDefinition2.xml.rels": rels_def(2),
+        "xl/timelineCaches/timelineCache1.xml": timeline1,
+        "xl/timelineCaches/timelineCache2.xml": timeline2,
+        **slicers,
+        "xl/slicers/slicer1.xml": slicer_view,
         "customXml/item1.xml": "<preservar>BYTES</preservar>",
     }
     with zipfile.ZipFile(caminho, "w", zipfile.ZIP_DEFLATED) as z:
@@ -488,30 +634,91 @@ def test_processamento_completo(tmp_path):
     assert linhas2[805][9] == 1            # J=1
     assert linhas2[806][0] == "Convênio Novo 2"
     assert linhas2[806][9] == 1
-    # partes intocadas preservadas byte a byte
+
+    inicio, fim = ie._janela_entrega()
     with zipfile.ZipFile(base) as zb, zipfile.ZipFile(final) as zf:
+        # partes intocadas preservadas byte a byte
         assert zb.read("xl/styles.xml") == zf.read("xl/styles.xml")
         assert zb.read("customXml/item1.xml") == zf.read("customXml/item1.xml")
+        assert zb.read("xl/slicers/slicer1.xml") == zf.read("xl/slicers/slicer1.xml")
         assert 'ref="A1:V4"' in zf.read("xl/tables/table1.xml").decode("utf-8")
         assert 'ref="A1:I807"' in zf.read("xl/tables/table2.xml").decode("utf-8")
         assert 'fullCalcOnLoad="1"' in zf.read("xl/workbook.xml").decode("utf-8")
         assert "'BD1'!$A$1:$V$4" in zf.read("xl/workbook.xml").decode("utf-8")
         assert 'A1:V4' in zf.read("xl/worksheets/sheet5.xml").decode("utf-8")
         assert 'refreshOnLoad' not in zf.read("xl/workbook.xml").decode("utf-8")
+        assert set(zf.namelist()) == set(zb.namelist())   # nenhuma parte criada/removida
         # fórmula da V com cache inline (openpyxl devolve a fórmula, não o cache)
         sheet5_final = zf.read("xl/worksheets/sheet5.xml").decode("utf-8")
         assert ('<c r="V3" s="43" t="str"><f>=IF(RIGHT(A3,3)="(R)","Recurso","Comum")</f><v>Comum</v></c>'
                 in sheet5_final)
         assert ('<c r="V4" s="43" t="str"><f>=IF(RIGHT(A4,3)="(R)","Recurso","Comum")</f><v>Recurso</v></c>'
                 in sheet5_final)
-        assert set(zf.namelist()) == set(zb.namelist())   # nenhuma parte criada/removida
-        assert zb.read("xl/slicers/slicer1.xml") == zf.read("xl/slicers/slicer1.xml")
+
+        # ---- FASE 3c: caches regenerados (def1 = BD2, def2 = BD1) ----
+        def1 = zf.read("xl/pivotCache/pivotCacheDefinition1.xml").decode("utf-8")
+        def2 = zf.read("xl/pivotCache/pivotCacheDefinition2.xml").decode("utf-8")
+        rec1 = zf.read("xl/pivotCache/pivotCacheRecords1.xml").decode("utf-8")
+        rec2 = zf.read("xl/pivotCache/pivotCacheRecords2.xml").decode("utf-8")
+
+        # BD1: 1 existente + 2 novas; itens novos no fim dos sharedItems
+        assert 'recordCount="3"' in def2
+        assert 'refreshedBy="Leonardo Martins"' in def2
+        assert '<n v="200001"/>' in def2 and '<s v="200002 (R)"/>' in def2
+        assert '<s v="OUTRO CONVÊNIO"/>' in def2 and '<s v="TERCEIRO"/>' in def2
+        assert rec2.count("<r>") == 3 and 'count="3"' in rec2
+        # BD2: 1 história + 2 do bloco; convênio renormalizado no cache
+        assert 'recordCount="3"' in def1
+        assert 'ref="A1:I807"' in def1 and 'ref="A1:I2"' not in def1
+        assert '<s v="Convênio Z"/>' in def1 and '<s v="Convênio Z "/>' not in def1
+        assert '<s v="Convênio Novo"/>' in def1 and '<s v="Convênio Novo 2"/>' in def1
+        assert rec1.count("<r>") == 3 and 'count="3"' in rec1
+        # refreshOnLoad removido dos caches e das pivôs
+        for parte in ("xl/pivotCache/pivotCacheDefinition1.xml",
+                      "xl/pivotCache/pivotCacheDefinition2.xml"):
+            assert "refreshOnLoad" not in zf.read(parte).decode("utf-8")
         for i in range(1, 5):
-            parte = f"xl/pivotTables/pivotTable{i}.xml"
-            assert "refreshOnLoad" not in zb.read(parte).decode("utf-8")
-            assert 'refreshOnLoad="1"' in zf.read(parte).decode("utf-8")
-        cache1_final = zf.read("xl/pivotCache/pivotCacheDefinition1.xml").decode("utf-8")
-        assert 'ref="A1:I807"' in cache1_final and 'ref="A1:I2"' not in cache1_final
+            p = zf.read(f"xl/pivotTables/pivotTable{i}.xml").decode("utf-8")
+            assert "refreshOnLoad" not in p
+
+        # timeline "Entrega" = mês de fechamento (dateBetween + selection antes
+        # dos bounds); "Vencimento" permanece intocada
+        tl1 = zf.read("xl/timelineCaches/timelineCache1.xml").decode("utf-8")
+        assert 'filterType="dateBetween"' in tl1
+        assert (f'<selection startDate="{inicio.isoformat()}T00:00:00" '
+                f'endDate="{fim.isoformat()}T00:00:00"/>') in tl1
+        assert "<bounds " in tl1
+        tl2 = zf.read("xl/timelineCaches/timelineCache2.xml").decode("utf-8")
+        assert 'filterType="unknown"' in tl2 and "<selection" not in tl2
+
+        # slicer Tipo da Data Entrega só em Comum; os das outras abas intocados
+        sc3 = zf.read("xl/slicerCaches/slicerCache3.xml").decode("utf-8")
+        assert re.findall(r'<i x="(\d+)" s="1"', sc3) == ["0"]
+        sc4 = zf.read("xl/slicerCaches/slicerCache4.xml").decode("utf-8")
+        assert re.findall(r'<i x="(\d+)" s="1"', sc4) == ["0", "1", "2"]
+        # slicers Convênio: novos convênios entram marcados (BD1 tabs 3/6/11,
+        # BD2 tab 8 — índices 1 e 2 do cache de cada BD)
+        for n in ("slicerCache1.xml", "slicerCache2.xml", "slicerCache5.xml",
+                  "slicerCache7.xml"):
+            sc = zf.read(f"xl/slicerCaches/{n}").decode("utf-8")
+            assert 'count="3"' in sc
+            assert '<i x="1" s="1"/>' in sc and '<i x="2" s="1"/>' in sc
+
+        # pivôs 1–3: itens novos anexados; convênios colapsados (sd="0")
+        p1 = zf.read("xl/pivotTables/pivotTable1.xml").decode("utf-8")
+        assert '<item x="1" h="1"/>' in p1          # Recurso oculto (campo 21)
+        assert '<item m="1" x="2" h="1"/>' in p1    # vazio oculto (campo 21)
+        assert '<item x="0" sd="0"/>' in p1         # convênio colapsado
+        assert '<item x="1" sd="0"/>' in p1         # convênio novo colapsado
+        assert '<item x="1"/>' in p1                # remessa/protocolo novos visíveis
+        for i in (2, 3):
+            p = zf.read(f"xl/pivotTables/pivotTable{i}.xml").decode("utf-8")
+            assert 'h="1"' not in p                 # h só na pivô 1 (como no real)
+            assert '<item x="1" sd="0"/>' in p
+        # pivô 4 (À Quitar, cache BD2): convênios colapsados, datas visíveis
+        p4 = zf.read("xl/pivotTables/pivotTable4.xml").decode("utf-8")
+        assert '<item x="1" sd="0"/>' in p4
+        assert '<item x="1"/>' in p4                # data nova visível
 
 
 def test_processamento_aborta_se_dimension_bd2_faltar(tmp_path):
@@ -543,14 +750,22 @@ def test_limpo_none_integra_so_bd1(tmp_path):
     linhas2 = list(wb["BD2"].iter_rows(values_only=True))
     assert len(linhas2) == 2
     assert linhas2[1][0] == "Convênio Z "
-    # tabelas da BD2 sem alteração; a da BD1 cresceu
     with zipfile.ZipFile(base) as zb, zipfile.ZipFile(final) as zf:
         assert zb.read("xl/slicers/slicer1.xml") == zf.read("xl/slicers/slicer1.xml")
+        # cache da BD1 regenerado com as novas; cache da BD2 INTOCADO
+        def1 = zf.read("xl/pivotCache/pivotCacheDefinition1.xml").decode("utf-8")
+        def2 = zf.read("xl/pivotCache/pivotCacheDefinition2.xml").decode("utf-8")
+        assert 'recordCount="3"' in def2
+        assert 'recordCount="1"' in def1
+        assert 'ref="A1:I2"' in def1
+        assert '<s v="Convênio Z "/>' in def1    # sem normalização (BD2 intocada)
+        # timeline/slicer/pivôs ajustados mesmo assim (a BD1 mudou)
+        tl1 = zf.read("xl/timelineCaches/timelineCache1.xml").decode("utf-8")
+        assert 'filterType="dateBetween"' in tl1
         for i in range(1, 5):
-            parte = f"xl/pivotTables/pivotTable{i}.xml"
-            assert 'refreshOnLoad="1"' in zf.read(parte).decode("utf-8")
-        cache1 = zf.read("xl/pivotCache/pivotCacheDefinition1.xml").decode("utf-8")
-        assert 'ref="A1:I2"' in cache1  # BD2 intocada → cache1 permanece no ref original
+            assert "refreshOnLoad" not in zf.read(
+                f"xl/pivotTables/pivotTable{i}.xml").decode("utf-8")
+        # tabelas da BD2 sem alteração; a da BD1 cresceu
         assert 'ref="A1:I2"' in zf.read("xl/tables/table2.xml").decode("utf-8")
         assert 'ref="A1:V4"' in zf.read("xl/tables/table1.xml").decode("utf-8")
 
@@ -559,17 +774,17 @@ def _trocar_caches(tmp_path, base):
     """Reescreve a base com as partes de pivot cache RENUMERADAS (1↔2),
     como o Excel fez no arquivo real de 02/09/2026: cacheDefinition1 passa a
     ser o cache da BD1 (fonte = tabela BD_1, por nome) e o da BD2
-    (worksheetSource com ref A1:I) vai para cacheDefinition2."""
-    import zipfile
+    (worksheetSource com ref A1:I) vai para cacheDefinition2. Defs, records e
+    rels trocam JUNTOS para manter cada cache íntegro."""
     with zipfile.ZipFile(base) as z:
         partes = {n: z.read(n) for n in z.namelist()}
-    cache_bd2 = partes["xl/pivotCache/pivotCacheDefinition1.xml"].decode("utf-8")
-    cache_bd1 = (DECL
-                 + '<pivotCacheDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-                 + '<cacheSource type="worksheet"><worksheetSource name="BD_1"/></cacheSource>'
-                 + '</pivotCacheDefinition>')
-    partes["xl/pivotCache/pivotCacheDefinition1.xml"] = cache_bd1
-    partes["xl/pivotCache/pivotCacheDefinition2.xml"] = cache_bd2
+    for a, b in [("xl/pivotCache/pivotCacheDefinition1.xml",
+                  "xl/pivotCache/pivotCacheDefinition2.xml"),
+                 ("xl/pivotCache/pivotCacheRecords1.xml",
+                  "xl/pivotCache/pivotCacheRecords2.xml"),
+                 ("xl/pivotCache/_rels/pivotCacheDefinition1.xml.rels",
+                  "xl/pivotCache/_rels/pivotCacheDefinition2.xml.rels")]:
+        partes[a], partes[b] = partes[b], partes[a]
     caminho = tmp_path / "base_trocado.xlsx"
     with zipfile.ZipFile(caminho, "w", zipfile.ZIP_DEFLATED) as z:
         for nome, conteudo in partes.items():
@@ -580,7 +795,7 @@ def _trocar_caches(tmp_path, base):
 def test_cache_bd2_renumerado_pelo_excel(tmp_path):
     """O Excel pode renumerar as partes de pivot cache ao salvar (caso real de
     02/09/2026). O motor deve achar o cache da BD2 PELO CONTEÚDO e atualizar
-    o ref na parte certa — sem tocar no cache da BD1."""
+    o ref na parte certa — regenerando cada cache na sua parte renumerada."""
     base = _criar_base(tmp_path)
     base_trocado = _trocar_caches(tmp_path, base)
     wpd = _criar_wpd(tmp_path)
@@ -593,9 +808,15 @@ def test_cache_bd2_renumerado_pelo_excel(tmp_path):
     with zipfile.ZipFile(final) as zf:
         cache1 = zf.read("xl/pivotCache/pivotCacheDefinition1.xml").decode("utf-8")
         cache2 = zf.read("xl/pivotCache/pivotCacheDefinition2.xml").decode("utf-8")
-    assert 'name="BD_1"' in cache1            # cache da BD1 permanece intocado
+        rec1 = zf.read("xl/pivotCache/pivotCacheRecords1.xml").decode("utf-8")
+        rec2 = zf.read("xl/pivotCache/pivotCacheRecords2.xml").decode("utf-8")
+    assert 'name="BD_1"' in cache1            # cache da BD1 na parte renumerada
+    assert 'recordCount="3"' in cache1        # ... e regenerado com as novas
+    assert rec1.count("<r>") == 3
     assert 'ref="A1:I807"' in cache2          # ref da BD2 atualizado na parte certa
     assert 'ref="A1:I2"' not in cache2
+    assert 'recordCount="3"' in cache2        # BD2: 1 história + 2 do bloco
+    assert rec2.count("<r>") == 3
 
 
 def test_parte_cache_bd2_seleciona_por_conteudo():
