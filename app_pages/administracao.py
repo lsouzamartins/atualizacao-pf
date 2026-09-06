@@ -69,6 +69,20 @@ with st.form("remover_usuario"):
             else:
                 st.error(resultado["erro"])
 
+st.markdown(f"#### {icone('layout-dashboard', 18)} Acesso ao Contas a Receber",
+            unsafe_allow_html=True)
+st.caption("Usuários marcados veem o portal e as páginas do dashboard de glosas.")
+with st.form("acesso_contas_receber"):
+    acessos = {}
+    for row in banco.listar_usuarios(conn):
+        acessos[row["login"]] = st.checkbox(
+            f"{row['login']} ({row['nome']})", value=bool(row["acesso_contas_receber"]))
+    if st.form_submit_button("Salvar acessos", type="primary"):
+        for login, valor in acessos.items():
+            banco.definir_acesso_contas_receber(conn, login, valor)
+        st.success("Acessos atualizados.")
+        st.rerun()
+
 st.markdown(f"#### {icone('camera', 18)} Foto do usuário (login)", unsafe_allow_html=True)
 st.caption("Foto exibida no cartão de login. O arquivo é guardado no tamanho "
            "original, sem cortes (PNG ou JPG, máx. 2 MB).")
