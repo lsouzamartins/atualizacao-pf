@@ -8,9 +8,10 @@ import banco_glosas
 
 
 @pytest.fixture()
-def conn(tmp_path):
+def conn(tmp_path, monkeypatch):
     c = banco_glosas.conectar(str(tmp_path / "teste.db"))
     banco_glosas.inicializar_banco(c)
+    monkeypatch.setattr(banco_glosas, "PASTA_UPLOADS", str(tmp_path / "uploads"))
     yield c
     c.close()
 
@@ -195,3 +196,15 @@ def test_nome_de_arquivo_seguro_nunca_escapa_da_pasta(conn, tmp_path):
     import os
     salvo = os.path.join(banco_glosas.PASTA_UPLOADS, upload["nome_arquivo"])
     assert os.path.exists(salvo)
+
+
+def test_reenvio_zerado_depois_da_confirmacao_nao_reavisa(conn, tmp_path):
+    arquivo = tmp_path / "dacm.xls"; arquivo.write_bytes(b"x")
+    banco_glosas.importar_dacm(conn, _parsed([_guia(glosa=10.0)]), "Porto Saúde", "lsmartins", str(arquivo))
+    banco_glosas.importar_dacm(conn, _parsed([_guia(glosa=0)]), "Porto Saúde", "lsmartins", str(arquivo))
+    guia_id = banco_glosas.guias_filtradas(conn)[0]["guia_id"]
+    banco_glosas.confirmar_glosa_recebida(conn, guia_id, usuario="lsmartins")
+    assert banco_glosas.guias_filtradas(conn)[0]["vl_glosa"] == 0
+    r = banco_glosas.importar_dacm(conn, _parsed([_guia(glosa=0)]), "Porto Saúde", "lsmartins", str(arquivo))
+    assert r["avisos_glosa_zerada"] == 0
+    assert banco_glosas.guias_filtradas(conn)[0]["aviso_glosa_zerada"] == 0

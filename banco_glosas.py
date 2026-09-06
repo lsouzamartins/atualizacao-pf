@@ -122,6 +122,9 @@ def listar_convenios(conn):
 
 def criar_ou_obter_convenio(conn, nome, registro_ans="", cnpj=""):
     """Devolve o convênio com este nome; cria se não existir."""
+    nome = (nome or "").strip()
+    if not nome:
+        raise ValueError("Informe o nome do convênio.")
     row = conn.execute("SELECT * FROM convenios WHERE nome=?", (nome,)).fetchone()
     if row:
         return dict(row)
@@ -285,6 +288,13 @@ def confirmar_glosa_recebida(conn, guia_id, usuario=""):
         raise ValueError("Guia não encontrada.")
     vl = guia["vl_recuperado"] if guia["vl_recuperado"] > 0 else guia["vl_glosa"]
     registrar_status(conn, guia_id, "Glosa Recebida", vl_recuperado=vl, usuario=usuario)
+    if guia["aviso_glosa_zerada"]:
+        # A glosa zerada no reenvio vira 0 em definitivo: o valor original já
+        # foi usado como default de vl_recuperado acima, e reenvios futuros do
+        # mesmo arquivo não podem re-disparar o aviso (a condição
+        # existente["vl_glosa"] > 0.005 deixa de valer).
+        conn.execute("UPDATE guias SET vl_glosa=0 WHERE id=?", (guia_id,))
+        conn.commit()
 
 
 def historico_status(conn, guia_id):
