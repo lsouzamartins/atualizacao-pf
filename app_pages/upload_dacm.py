@@ -19,13 +19,14 @@ banco_glosas.inicializar_banco(conn)
 arquivo = st.file_uploader("Arquivo do DACM", type=["xls", "xlsx"], key="up_dacm")
 
 if arquivo is not None and ("dacm_parsed" not in st.session_state
-                            or st.session_state.get("nome_arquivo_upado") != arquivo.name):
+                            or st.session_state.get("arquivo_id_upado") != arquivo.file_id):
     sufixo = os.path.splitext(arquivo.name)[1].lower()
     tmp = tempfile.NamedTemporaryFile(suffix=sufixo, delete=False)
     tmp.write(arquivo.getvalue())
     tmp.close()
     st.session_state["caminho_temp"] = tmp.name
     st.session_state["nome_arquivo_upado"] = arquivo.name
+    st.session_state["arquivo_id_upado"] = arquivo.file_id
     st.session_state.pop("dacm_parsed", None)
     st.session_state.pop("erro_parse", None)
     try:
@@ -74,7 +75,7 @@ if parsed:
             st.success(f"Importação concluída: {resultado['novas']} guia(s) nova(s), "
                        f"{resultado['atualizadas']} atualizada(s), "
                        f"{resultado['avisos_glosa_zerada']} aviso(s) de glosa zerada.")
-            for chave in ("dacm_parsed", "caminho_temp", "nome_arquivo_upado", "erro_parse"):
+            for chave in ("dacm_parsed", "caminho_temp", "nome_arquivo_upado", "arquivo_id_upado", "erro_parse"):
                 st.session_state.pop(chave, None)
             st.rerun()
         except Exception as e:
