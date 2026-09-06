@@ -290,3 +290,15 @@ def formatar_brl(valor: float) -> str:
     """Formata número como moeda Brasil: 1234567.89 -> '1.234.567,89'."""
     texto = f"{float(valor):,.2f}"
     return texto.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def formatar_data_br(data_iso: str) -> str:
+    """'2026-09-01' -> '01-09-2026' (exibição brasileira dd-mm-aaaa).
+    Entradas que não são ISO permanecem como estão."""
+    try:
+        ano, mes, dia = data_iso.split("-")
+        if len(ano) == 4 and len(mes) == 2 and len(dia) == 2:
+            return f"{dia}-{mes}-{ano}"
+    except (ValueError, AttributeError):
+        pass
+    return data_iso

@@ -3,7 +3,7 @@ import os
 import pandas as pd
 import streamlit as st
 import banco
-from ui_comum import icone, formatar_brl, pastas, VERSAO
+from ui_comum import icone, formatar_brl, formatar_data_br, pastas, VERSAO
 
 st.markdown(f"### {icone('calendar', 20, '#1C5A8A')} Histórico", unsafe_allow_html=True)
 
@@ -68,8 +68,9 @@ datas = banco.resumos_disponiveis(conn)
 if datas:
     convenios = banco.convenios_disponiveis(conn)
     c1, c2 = st.columns(2)
-    de = c1.selectbox("De", datas, index=len(datas) - 1)
-    ate = c2.selectbox("Até", datas, index=0)
+    de = c1.selectbox("De", datas, index=len(datas) - 1,
+                      format_func=formatar_data_br)
+    ate = c2.selectbox("Até", datas, index=0, format_func=formatar_data_br)
     filtro = st.selectbox("Convênio", ["Todos"] + convenios)
     df = banco.historico(conn, de=de, ate=ate,
                          convenio=None if filtro == "Todos" else filtro)
@@ -99,6 +100,7 @@ else:
                     "vlr_liquido": "Vlr Líquido", "quitado": "Quitado",
                     "nao_identificado": "Não Identificado"})
                 .sort_values("Data", ascending=False))
+    totais["Data"] = totais["Data"].apply(formatar_data_br)
     for col in ("Vlr Bruto", "Vlr Líquido", "Quitado", "Não Identificado"):
         totais[col] = totais[col].apply(formatar_brl)
     st.markdown("#### Totais por dia")
@@ -108,6 +110,7 @@ else:
         "data": "Data", "convenio": "Convênio", "usuario": "Usuário",
         "status": "Status", "vlr_bruto": "Vlr Bruto", "vlr_liquido": "Vlr Líquido",
         "quitado": "Quitado", "nao_identificado": "Não Identificado"})
+    df_exib["Data"] = df_exib["Data"].apply(formatar_data_br)
     for col in ("Vlr Bruto", "Vlr Líquido", "Quitado", "Não Identificado"):
         df_exib[col] = df_exib[col].apply(formatar_brl)
     st.dataframe(df_exib, hide_index=True)

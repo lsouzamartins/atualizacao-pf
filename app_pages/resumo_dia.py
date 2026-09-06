@@ -13,7 +13,7 @@ import streamlit as st
 
 import banco
 
-from ui_comum import icone, formatar_brl, VERSAO
+from ui_comum import icone, formatar_brl, formatar_data_br, VERSAO
 
 # ---------------------------------------------------------------------------
 # MAPEAMENTO DAS COLUNAS DO BANCO → RÓTULOS DA TELA
@@ -36,7 +36,7 @@ if not datas:
     st.info("Nenhum processamento registrado ainda.")
     conn.close()
     st.stop()
-data_exibida = st.selectbox("Data", datas, index=0)
+data_exibida = st.selectbox("Data", datas, index=0, format_func=formatar_data_br)
 df_por_convenio = banco.resumos_do_dia(conn, data_exibida)
 conn.close()
 
