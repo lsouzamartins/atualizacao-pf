@@ -75,7 +75,7 @@ if parsed:
             st.success(f"Importação concluída: {resultado['novas']} guia(s) nova(s), "
                        f"{resultado['atualizadas']} atualizada(s), "
                        f"{resultado['avisos_glosa_zerada']} aviso(s) de glosa zerada.")
-            for chave in ("dacm_parsed", "caminho_temp", "nome_arquivo_upado", "arquivo_id_upado", "erro_parse"):
+            for chave in ("up_dacm", "dacm_parsed", "caminho_temp", "nome_arquivo_upado", "arquivo_id_upado", "erro_parse"):
                 st.session_state.pop(chave, None)
             st.rerun()
         except Exception as e:
