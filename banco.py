@@ -168,14 +168,42 @@ def remover_usuario(conn, login_alvo, login_operador):
     return {"ok": True}
 
 
-def registrar_execucao(conn, usuario, status, mensagem, arquivos):
+def iniciar_execucao(conn, usuario, agora=None):
+    """Grava o INÍCIO de uma execução (status 'em_andamento') e devolve o id.
+    Antes, a execução só era gravada no fim — se o processo morresse no meio,
+    nada ficava registrado."""
+    agora = datetime.fromisoformat(agora) if agora else datetime.now()
     cur = conn.execute(
         "INSERT INTO execucoes (usuario, inicio, fim, status, mensagem, arquivos_gerados) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (usuario, datetime.now().isoformat(), datetime.now().isoformat(),
-         status, mensagem, json.dumps(arquivos)))
+        "VALUES (?, ?, NULL, 'em_andamento', NULL, NULL)",
+        (usuario, agora.isoformat()))
     conn.commit()
     return cur.lastrowid
+
+
+def finalizar_execucao(conn, execucao_id, status, mensagem, arquivos, agora=None):
+    """Fecha a execução: grava fim, status, mensagem e arquivos gerados.
+    Devolve o nº de linhas alteradas (0 se o id não existir)."""
+    agora = datetime.fromisoformat(agora) if agora else datetime.now()
+    cur = conn.execute(
+        "UPDATE execucoes SET fim=?, status=?, mensagem=?, arquivos_gerados=? WHERE id=?",
+        (agora.isoformat(), status, mensagem, json.dumps(arquivos), execucao_id))
+    conn.commit()
+    return cur.rowcount
+
+
+def listar_execucoes(conn, limite=50):
+    """Execuções mais recentes primeiro (id, usuario, inicio, fim, status,
+    mensagem, arquivos_gerados)."""
+    return conn.execute(
+        "SELECT id, usuario, inicio, fim, status, mensagem, arquivos_gerados "
+        "FROM execucoes ORDER BY id DESC LIMIT ?", (limite,)).fetchall()
+
+
+def registrar_execucao(conn, usuario, status, mensagem, arquivos):
+    eid = iniciar_execucao(conn, usuario)
+    finalizar_execucao(conn, eid, status, mensagem, arquivos)
+    return eid
 
 
 def gravar_resumos(conn, execucao_id, df):

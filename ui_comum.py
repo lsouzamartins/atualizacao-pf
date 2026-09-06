@@ -24,6 +24,7 @@ PASTA_RAIZ = obter_pasta_raiz()
 PASTA_RELATORIOS = os.path.join(PASTA_RAIZ, "relatórios")
 PASTA_SAIDA = os.path.join(PASTA_RAIZ, "saída")
 PASTA_ERROS = os.path.join(PASTA_RAIZ, "logo de erro")
+PASTA_LOGS = os.path.join(PASTA_RAIZ, "logs")
 
 
 def pastas() -> dict:
@@ -34,6 +35,7 @@ def pastas() -> dict:
         "relatorios": PASTA_RELATORIOS,
         "saida": PASTA_SAIDA,
         "erros": PASTA_ERROS,
+        "logs": PASTA_LOGS,
     }
 
 

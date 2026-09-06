@@ -53,9 +53,10 @@ def encontrar_arquivo_entrada(pasta_raiz: str, nome: str) -> str:
 
 
 def garantir_pastas(pasta_raiz: str):
-    """Cria pastas de saída e erros se não existirem."""
+    """Cria pastas de saída, erros e logs se não existirem."""
     os.makedirs(os.path.join(pasta_raiz, "saída"), exist_ok=True)
     os.makedirs(os.path.join(pasta_raiz, "logo de erro"), exist_ok=True)
+    os.makedirs(os.path.join(pasta_raiz, "logs"), exist_ok=True)
 
 
 # ==============================================================================
@@ -133,11 +134,17 @@ def converter_inteiro(valor):
 # LOG DE ERROS COM ROTAÇÃO (mantém os últimos 5)
 # ==============================================================================
 MAX_LOGS_ERRO = 5
+MAX_LOGS_EXECUCAO = 20
 
 
-def salvar_log_erro(pasta_erros: str, exception: Exception):
-    """Salva o log de erro com rotação (últimos 5 logs preservados)."""
-    now = datetime.now()
+def salvar_log_erro(pasta_erros: str, exception: Exception,
+                    log_execucao=None, fase=None, agora=None):
+    """Salva o log de erro com rotação (últimos 5 logs preservados).
+
+    log_execucao: log completo da execução até o erro (o "antes").
+    fase: em qual fase do processamento o erro ocorreu.
+    """
+    now = agora or datetime.now()
     timestamp = now.strftime("%Y%m%d_%H%M%S")
     log_arquivo = os.path.join(pasta_erros, f"erro_{timestamp}.txt")
 
@@ -145,7 +152,14 @@ def salvar_log_erro(pasta_erros: str, exception: Exception):
         f.write("=== LOG DE ERRO ===\n")
         f.write(f"Data/Hora: {now.strftime('%d/%m/%Y %H:%M:%S')}\n")
         f.write(f"Tipo: {type(exception).__name__}\n")
-        f.write(f"Mensagem: {str(exception)}\n\n")
+        f.write(f"Mensagem: {str(exception)}\n")
+        if fase:
+            f.write(f"Fase: {fase}\n")
+        f.write("\n")
+        if log_execucao:
+            f.write("=== LOG DA EXECUÇÃO (o que aconteceu antes do erro) ===\n")
+            f.write(log_execucao.rstrip() + "\n\n")
+        f.write("=== RASTREAMENTO DO ERRO ===\n")
         f.write(traceback.format_exc())
 
     # Rotação: mantém só os 5 mais recentes
@@ -158,6 +172,31 @@ def salvar_log_erro(pasta_erros: str, exception: Exception):
             os.remove(os.path.join(pasta_erros, log_antigo))
         except Exception:
             pass
+
+    return log_arquivo
+
+
+def salvar_log_execucao(pasta_logs: str, execucao_id: int, texto: str) -> str:
+    """Guarda o log completo de uma execução (execucao_<id>.txt) com rotação
+    (mantém as últimas 20 execuções). Devolve o caminho do arquivo."""
+    os.makedirs(pasta_logs, exist_ok=True)
+    log_arquivo = os.path.join(pasta_logs, f"execucao_{execucao_id}.txt")
+    with open(log_arquivo, "w", encoding="utf-8") as f:
+        f.write(texto)
+
+    # Rotação: mantém só as 20 execuções de maior id
+    ids = []
+    for nome in os.listdir(pasta_logs):
+        m = re.match(r"execucao_(\d+)\.txt$", nome)
+        if m:
+            ids.append((int(m.group(1)), nome))
+    if len(ids) > MAX_LOGS_EXECUCAO:
+        ids.sort(reverse=True)
+        for _, nome in ids[MAX_LOGS_EXECUCAO:]:
+            try:
+                os.remove(os.path.join(pasta_logs, nome))
+            except Exception:
+                pass
 
     return log_arquivo
 

@@ -22,6 +22,7 @@ import banco
 from ui_comum import icone, pastas, VERSAO
 from core import (
     salvar_log_erro,
+    salvar_log_execucao,
     gerar_resumo,
     processar_fase_0_wpd,
     processar_fase_1_nao_identificado,
@@ -55,6 +56,7 @@ PASTA_RAIZ = _caminhos["raiz"]
 PASTA_RELATORIOS = _caminhos["relatorios"]
 PASTA_SAIDA = _caminhos["saida"]
 PASTA_ERROS = _caminhos["erros"]
+PASTA_LOGS = _caminhos["logs"]
 PASTA_UPLOADS = os.path.join(PASTA_RAIZ, "uploads")
 
 
@@ -134,8 +136,18 @@ if executar and not st.session_state.em_andamento:
     data_hoje = datetime.now().strftime("%d.%m.%y")
     xlsx_hias_final = os.path.join(PASTA_SAIDA, f"Posição Financeira Hias_{data_hoje}.xlsx")
 
+    # Rastreabilidade: a execução é gravada no banco DESDE O INÍCIO
+    # (status 'em_andamento') — se o processo morrer no meio, fica o registro.
+    conn = None
+    execucao_id = None
+    fase_atual = "Preparação"
+    log_erro_path = None
     sucesso = False
     try:
+        conn = banco.conectar()
+        banco.inicializar_banco(conn)
+        execucao_id = banco.iniciar_execucao(conn, st.session_state["usuario"]["login"])
+
         os.makedirs(pasta_sessao, exist_ok=True)
         for nome, upload in arquivos.items():
             with open(os.path.join(pasta_sessao, nome), "wb") as f:
@@ -146,16 +158,19 @@ if executar and not st.session_state.em_andamento:
             print("🧹 Preparando ambiente...")
 
             # FASE 0 (0% → 33%)
+            fase_atual = "Fase 0 (WPD-26)"
             progress_bar.progress(5, text="[Fase 0/4] Processando WPD-26...")
             df_wpd = processar_fase_0_wpd(xls_wpd, xlsx_wpd_limpo)
             progress_bar.progress(33, text="[Fase 0/4] WPD-26 ✓")
 
             # FASE 1 (33% → 66%)
+            fase_atual = "Fase 1 (Não Identificado)"
             progress_bar.progress(38, text="[Fase 1/4] Processando Não Identificado...")
             df_ni = processar_fase_1_nao_identificado(xls_nao_identificado, xlsx_nao_identificado_limpo)
             progress_bar.progress(66, text="[Fase 1/4] Não Identificado ✓")
 
             # FASES 2-4 (66% → 100%)
+            fase_atual = "Fases 2-4 (Integração Hias)"
             progress_bar.progress(71, text="[Fases 2-4/4] Integrando ao Hias...")
             processar_fases_2_3_4_hias(
                 xlsx_nao_identificado_limpo, xlsx_hias_base, xlsx_hias_final,
@@ -169,18 +184,16 @@ if executar and not st.session_state.em_andamento:
             sucesso = True
 
     except Exception as e:
-        print(f"\n[CRÍTICO] Ocorreu um erro: {type(e).__name__}: {e}")
+        print(f"\n[CRÍTICO] Erro na {fase_atual}: {type(e).__name__}: {e}")
+        if conn is not None:
+            try:
+                banco.finalizar_execucao(conn, execucao_id, "falha", str(e)[:500], [])
+            except Exception as e_reg:
+                print(f"[AVISO] Não foi possível registrar a falha no banco: {e_reg}")
         try:
-            conn = banco.conectar()
-            banco.inicializar_banco(conn)
-            banco.registrar_execucao(conn, st.session_state["usuario"]["login"],
-                                     "falha", str(e)[:500], [])
-            conn.close()
-        except Exception as e_reg:
-            print(f"[AVISO] Não foi possível registrar a falha no banco: {e_reg}")
-        try:
-            log_path = salvar_log_erro(PASTA_ERROS, e)
-            print(f"Diagnóstico salvo em: {log_path}")
+            log_erro_path = salvar_log_erro(
+                PASTA_ERROS, e, log_execucao=log_buffer.getvalue(), fase=fase_atual)
+            print(f"Diagnóstico salvo em: {log_erro_path}")
         except Exception:
             pass
         progress_bar.progress(100, text="Erro na execução!")
@@ -189,24 +202,30 @@ if executar and not st.session_state.em_andamento:
     finally:
         shutil.rmtree(pasta_sessao, ignore_errors=True)
         st.session_state.em_andamento = False
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     if sucesso:
         try:
-            conn = banco.conectar()
-            banco.inicializar_banco(conn)
             df_resumos = agregar_para_banco(df_ni)
             arquivos_gerados = [os.path.basename(xlsx_hias_final),
                                 os.path.basename(xlsx_wpd_limpo),
                                 os.path.basename(xlsx_nao_identificado_limpo)]
-            eid = banco.registrar_execucao(conn, st.session_state["usuario"]["login"],
-                                           "sucesso", "", arquivos_gerados)
-            banco.gravar_resumos(conn, eid, df_resumos)
-            conn.close()
+            banco.finalizar_execucao(conn, execucao_id, "sucesso", "", arquivos_gerados)
+            banco.gravar_resumos(conn, execucao_id, df_resumos)
         except Exception as e:
             print(f"[AVISO] Processamento OK, mas falha ao gravar no banco: {e}")
             st.warning(f"Processamento OK, mas falha ao gravar no banco: {e}")
 
     log_texto = log_buffer.getvalue()
+    if execucao_id is not None:
+        try:
+            salvar_log_execucao(PASTA_LOGS, execucao_id, log_texto)
+        except Exception as e:
+            print(f"[AVISO] Não foi possível salvar o log da execução: {e}")
     st.session_state.ultimo_log = log_texto
     st.session_state.ultimo_sucesso = sucesso
     st.session_state.ultima_execucao = datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -214,7 +233,16 @@ if executar and not st.session_state.em_andamento:
     if sucesso:
         st.toast("Concluído com sucesso!", icon=":material/check_circle:")
     else:
-        st.toast("Erro na execução. Verifique o log.", icon=":material/error:")
+        st.toast("Erro na execução. Diagnóstico salvo — consulte o Histórico.",
+                 icon=":material/error:")
+        if log_erro_path:
+            trecho = f" (Execução {execucao_id})" if execucao_id is not None else ""
+            st.error(
+                f"O processamento parou na **{fase_atual}**.\n\n"
+                f"Diagnóstico completo salvo em `{os.path.basename(log_erro_path)}`"
+                f" (pasta 'logo de erro').\n\n"
+                f"Na página **Histórico** você vê o log completo desta execução{trecho}."
+            )
 
     with st.container(height=450, border=True):
         st.code(log_texto, language=None, line_numbers=False)

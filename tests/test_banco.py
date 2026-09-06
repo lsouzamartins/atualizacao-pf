@@ -68,6 +68,38 @@ def test_criar_usuario_rejeita_login_ou_nome_vazio(tmp_path):
         banco.criar_usuario(conn, "leo", "  ", "senha12345")
     conn.close()
 
+def test_inicia_e_finaliza_execucao(tmp_path):
+    db = str(tmp_path / "pf.db")
+    conn = banco.conectar(db); banco.inicializar_banco(conn)
+    eid = banco.iniciar_execucao(conn, "leo", agora="2026-09-05T10:00:00")
+    row = conn.execute("SELECT * FROM execucoes WHERE id=?", (eid,)).fetchone()
+    assert row["status"] == "em_andamento"
+    assert row["inicio"] == "2026-09-05T10:00:00"
+    assert row["fim"] is None and row["mensagem"] is None
+    n = banco.finalizar_execucao(conn, eid, "falha", "Erro X", [],
+                                 agora="2026-09-05T10:05:00")
+    assert n == 1
+    row = conn.execute("SELECT * FROM execucoes WHERE id=?", (eid,)).fetchone()
+    assert row["status"] == "falha"
+    assert row["fim"] == "2026-09-05T10:05:00"
+    assert row["mensagem"] == "Erro X"
+    assert banco.arquivos_da_execucao(conn, eid) == []
+    # finalizar id inexistente: devolve 0, sem erro
+    assert banco.finalizar_execucao(conn, 999, "sucesso", "", []) == 0
+    conn.close()
+
+def test_lista_execucoes_mais_recente_primeiro_com_limite(tmp_path):
+    db = str(tmp_path / "pf.db")
+    conn = banco.conectar(db); banco.inicializar_banco(conn)
+    for i in range(3):
+        eid = banco.iniciar_execucao(conn, f"u{i}", agora=f"2026-09-05T10:0{i}:00")
+        banco.finalizar_execucao(conn, eid, "sucesso", "", [],
+                                 agora=f"2026-09-05T10:0{i}:30")
+    linhas = banco.listar_execucoes(conn, limite=2)
+    assert [r["usuario"] for r in linhas] == ["u2", "u1"]
+    assert [r["status"] for r in linhas] == ["sucesso", "sucesso"]
+    conn.close()
+
 def test_historico_filtra_por_convenio(tmp_path):
     db = str(tmp_path / "pf.db")
     conn = banco.conectar(db); banco.inicializar_banco(conn)
