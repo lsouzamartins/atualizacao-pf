@@ -102,6 +102,12 @@ def listar_usuarios(conn):
         "SELECT id, login, nome, admin FROM usuarios ORDER BY login").fetchall()
 
 
+def login_existe(conn, login):
+    """True se já existe usuário com este login (usado pelo avatar no login)."""
+    return conn.execute(
+        "SELECT 1 FROM usuarios WHERE login=?", (login.strip(),)).fetchone() is not None
+
+
 def autenticar(conn, login, senha, agora=None):
     """Autentica e devolve dict do usuário; None se login/senha inválidos."""
     agora = datetime.fromisoformat(agora) if agora else datetime.now()

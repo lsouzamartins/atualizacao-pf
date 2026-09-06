@@ -15,7 +15,7 @@ import streamlit as st
 from core import obter_pasta_raiz, garantir_pastas
 
 
-VERSAO = "Criado por Leonardo Martins · Revisado por Claude Code (Anthropic) · V 3.2026.0819 · Streamlit + Lucide"
+VERSAO = "Criado por Leonardo Martins · Revisado por Claude Code (Anthropic) · V 4.2026.0905 · Streamlit + Lucide"
 
 # ---------------------------------------------------------------------------
 # CAMINHOS PRINCIPAIS
@@ -25,6 +25,7 @@ PASTA_RELATORIOS = os.path.join(PASTA_RAIZ, "relatórios")
 PASTA_SAIDA = os.path.join(PASTA_RAIZ, "saída")
 PASTA_ERROS = os.path.join(PASTA_RAIZ, "logo de erro")
 PASTA_LOGS = os.path.join(PASTA_RAIZ, "logs")
+PASTA_FOTOS = os.path.join(PASTA_RAIZ, "dados", "fotos")
 
 
 def pastas() -> dict:
@@ -36,6 +37,7 @@ def pastas() -> dict:
         "saida": PASTA_SAIDA,
         "erros": PASTA_ERROS,
         "logs": PASTA_LOGS,
+        "fotos": PASTA_FOTOS,
     }
 
 
@@ -109,6 +111,10 @@ CSS = """
     div[data-testid="stToast"] { border-radius: 10px !important; }
 
     .app-footer { text-align: center; color: var(--text-muted); font-size: 0.75rem; padding: 1.5rem 0 0.5rem 0; }
+
+    /* Foto do usuário na Administração */
+    .foto-admin-preview { width: 110px; height: 110px; border-radius: 50%;
+                          object-fit: cover; border: 3px solid var(--border); }
     .info-card { background: #FFFFFF; border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem 1.5rem; }
     .info-card h4 { color: var(--text); margin-top: 0; margin-bottom: 0.8rem; }
     .info-card ol { color: var(--text); padding-left: 1.2rem; }
@@ -174,6 +180,18 @@ LOGIN_CSS = """
     .login-card-titulo { font-size: 1.55rem; font-weight: 800; color: #131A3D; margin-bottom: .25rem; }
     .login-card-sub { font-size: .86rem; color: #64748B; margin-bottom: 1.7rem; }
 
+    /* Avatar no cartão de login: foto do usuário (tamanho fixo, sem distorção)
+       ou círculo padrão com a inicial */
+    .login-avatar { display: block; width: 120px; height: 120px; margin: 0 auto 1.4rem auto;
+                    border-radius: 50%; object-fit: cover; border: 4px solid #E2E8F0;
+                    background: #F8FAFC; }
+    .login-avatar-padrao { display: flex; align-items: center; justify-content: center;
+                           width: 120px; height: 120px; margin: 0 auto 1.4rem auto;
+                           border-radius: 50%; border: 4px solid #E2E8F0;
+                           background: linear-gradient(135deg, #4D7CFE 0%, #3153E8 100%);
+                           color: #FFFFFF; font-size: 2.4rem; font-weight: 800; }
+    .login-avatar-padrao svg { margin: 0; }
+
     /* Campos com ícones (usuário / cadeado) */
     .login-card div[data-testid="stTextInput"] { margin-bottom: .85rem; }
     .login-card div[data-testid="stTextInput"] input {
@@ -221,6 +239,7 @@ def injetar_css_login():
 _LUCIDE = {
     'activity':           '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
     'building-2':         '<path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/>',
+    'camera':             '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>',
     'calendar':           '<rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/>',
     'circle-check':       '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
     'circle-x':           '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
@@ -229,6 +248,8 @@ _LUCIDE = {
     'folder-output':      '<path d="M2 7.5V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2"/><path d="M2 13h10"/><path d="m5 10-3 3 3 3"/>',
     'info':               '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
     'play':               '<polygon points="5 3 19 12 5 21 5 3"/>',
+    'trash-2':            '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+    'user-round':         '<circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/>',
     'scroll-text':        '<path d="M8 21h12a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2Z"/><path d="M19 8H7"/><path d="M19 12H7"/><path d="M13 16H7"/>',
 }
 

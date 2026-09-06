@@ -193,6 +193,14 @@ def test_concluir_sucesso_com_conexao_fechada_falha(tmp_path):
     with pytest.raises(sqlite3.ProgrammingError):
         banco.concluir_sucesso(conn, eid, ["a.xlsx"], df)
 
+def test_login_existe(tmp_path):
+    db = str(tmp_path / "pf.db")
+    conn = banco.conectar(db); banco.inicializar_banco(conn)
+    assert banco.login_existe(conn, "leo") is False
+    banco.criar_usuario(conn, "leo", "Leo", "senha12345")
+    assert banco.login_existe(conn, " leo ") is True
+    conn.close()
+
 def test_historico_filtra_por_convenio(tmp_path):
     db = str(tmp_path / "pf.db")
     conn = banco.conectar(db); banco.inicializar_banco(conn)

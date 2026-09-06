@@ -53,10 +53,11 @@ def encontrar_arquivo_entrada(pasta_raiz: str, nome: str) -> str:
 
 
 def garantir_pastas(pasta_raiz: str):
-    """Cria pastas de saída, erros e logs se não existirem."""
+    """Cria pastas de saída, erros, logs e fotos se não existirem."""
     os.makedirs(os.path.join(pasta_raiz, "saída"), exist_ok=True)
     os.makedirs(os.path.join(pasta_raiz, "logo de erro"), exist_ok=True)
     os.makedirs(os.path.join(pasta_raiz, "logs"), exist_ok=True)
+    os.makedirs(os.path.join(pasta_raiz, "dados", "fotos"), exist_ok=True)
 
 
 # ==============================================================================

@@ -9,7 +9,8 @@ Contas individuais (bcrypt), sessão por aba (st.session_state),
 import streamlit as st
 
 import banco
-from ui_comum import injetar_css_login
+import fotos
+from ui_comum import injetar_css_login, PASTA_FOTOS
 
 NOME_COOKIE = "pf_sessao"
 
@@ -36,6 +37,37 @@ def trocar_senha(conn, login, senha_antiga, senha_nova):
 
 def usuario_atual():
     return st.session_state.get("usuario")
+
+
+def _avatar_login(login_digitado):
+    """HTML do avatar do cartão de login: foto do usuário (se existir) ou
+    círculo padrão com a inicial / ícone de pessoa."""
+    login_digitado = (login_digitado or "").strip()
+    if login_digitado:
+        try:
+            conn = _conexao()
+            try:
+                banco.inicializar_banco(conn)
+                existe = banco.login_existe(conn, login_digitado)
+            finally:
+                conn.close()
+            if existe:
+                foto = fotos.foto_base64(PASTA_FOTOS, login_digitado)
+                if foto:
+                    return (f'<img class="login-avatar" src="{foto}" '
+                            f'alt="Foto de {login_digitado}">')
+        except Exception:
+            pass  # login fora do padrão seguro → avatar padrão
+        inicial = login_digitado[:1].upper()
+        return f'<div class="login-avatar-padrao">{inicial}</div>'
+    return (
+        '<div class="login-avatar-padrao">'
+        '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"'
+        ' viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2"'
+        ' stroke-linecap="round" stroke-linejoin="round">'
+        '<circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></svg>'
+        '</div>'
+    )
 
 
 def _restaurar_sessao(token):
@@ -79,10 +111,16 @@ def exigir_login():
             '<div class="login-card-sub">Entre com suas credenciais para continuar.</div>',
             unsafe_allow_html=True,
         )
+        # Avatar do usuário digitado: foto cadastrada, inicial ou ícone padrão.
+        # O empty() reserva o espaço no topo do cartão; o markdown o preenche a
+        # cada rerun (o on_change do campo dispara rerun a cada tecla digitada).
+        slot_avatar = st.empty()
         login = st.text_input("Usuário", placeholder="Digite seu usuário",
-                              label_visibility="collapsed", key="login_usuario")
+                              label_visibility="collapsed", key="login_usuario",
+                              on_change=lambda: None)
         senha = st.text_input("Senha", type="password", placeholder="Digite sua senha",
                               label_visibility="collapsed", key="login_senha")
+        slot_avatar.markdown(_avatar_login(login), unsafe_allow_html=True)
         if st.button("Entrar", type="primary", width="stretch", key="login_entrar"):
             conn = _conexao()
             try:

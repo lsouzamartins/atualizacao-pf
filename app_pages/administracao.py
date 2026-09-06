@@ -1,8 +1,9 @@
-"""PÁGINA: ADMINISTRAÇÃO — só para admins: usuários, senhas, backup."""
+"""PÁGINA: ADMINISTRAÇÃO — só para admins: usuários, senhas, backup, fotos."""
 import os
 import streamlit as st
 import banco
-from ui_comum import icone, VERSAO
+import fotos
+from ui_comum import icone, VERSAO, pastas
 
 if not st.session_state.get("usuario", {}).get("admin"):
     st.error("Acesso restrito ao administrador.")
@@ -67,6 +68,42 @@ with st.form("remover_usuario"):
                 st.success(f"Usuário {alvo} removido.")
             else:
                 st.error(resultado["erro"])
+
+st.markdown(f"#### {icone('camera', 18)} Foto do usuário (login)")
+st.caption("Foto exibida no cartão de login. O arquivo é guardado no tamanho "
+           "original, sem cortes (PNG ou JPG, máx. 2 MB).")
+alvo_foto = st.selectbox("Usuário", logins, key="foto_alvo")
+foto_atual = fotos.foto_base64(pastas()["fotos"], alvo_foto)
+if foto_atual:
+    st.markdown(f'<img class="foto-admin-preview" src="{foto_atual}" '
+                f'alt="Foto atual de {alvo_foto}">', unsafe_allow_html=True)
+else:
+    st.info("Sem foto cadastrada.")
+with st.form("foto_usuario", clear_on_submit=True):
+    upload = st.file_uploader("Nova foto (PNG ou JPG, máx. 2 MB)",
+                              type=["png", "jpg", "jpeg"], key="up_foto")
+    col_salvar, col_remover = st.columns(2)
+    with col_salvar:
+        botao_salvar = st.form_submit_button("Salvar foto", type="primary")
+    with col_remover:
+        botao_remover = st.form_submit_button("Remover foto")
+    if botao_salvar:
+        if upload is None:
+            st.warning("Escolha um arquivo de imagem antes de salvar.")
+        else:
+            try:
+                fotos.salvar_foto(pastas()["fotos"], alvo_foto,
+                                  upload.getvalue(), upload.name)
+                st.success(f"Foto de {alvo_foto} salva.")
+                st.rerun()
+            except ValueError as e:
+                st.error(str(e))
+    if botao_remover:
+        if fotos.remover_foto(pastas()["fotos"], alvo_foto):
+            st.success(f"Foto de {alvo_foto} removida.")
+            st.rerun()
+        else:
+            st.info(f"{alvo_foto} não tinha foto cadastrada.")
 
 st.markdown("#### Backup do banco")
 if st.button("Baixar backup (.db)"):
