@@ -1,0 +1,23 @@
+"""PÁGINA: INÍCIO — portal com os sistemas disponíveis ao usuário."""
+import streamlit as st
+
+from ui_comum import icone, VERSAO
+
+st.markdown(f"### {icone('home', 20, '#1C5A8A')} Escolha o sistema", unsafe_allow_html=True)
+st.caption("Você tem acesso a mais de um sistema. Selecione onde quer trabalhar.")
+
+c1, c2 = st.columns(2)
+with c1:
+    with st.container(border=True):
+        st.markdown(f"{icone('play-circle', 22, '#1C5A8A')} **Atualização PF**",
+                    unsafe_allow_html=True)
+        st.caption("Processamento da posição financeira, resumo do dia e histórico.")
+        st.page_link("app_pages/processamento.py", label="Abrir Atualização PF")
+with c2:
+    with st.container(border=True):
+        st.markdown(f"{icone('hand-coins', 22, '#1C5A8A')} **Contas a Receber**",
+                    unsafe_allow_html=True)
+        st.caption("Dashboard de glosas e recursos dos DACMs dos convênios.")
+        st.page_link("app_pages/dashboard_glosas.py", label="Abrir Contas a Receber")
+
+st.markdown(f'<div class="app-footer">{VERSAO}</div>', unsafe_allow_html=True)

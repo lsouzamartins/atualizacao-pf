@@ -21,6 +21,7 @@ import streamlit as st
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import auth
+import navegacao
 from ui_comum import injetar_css, barra_cabecalho
 
 
@@ -57,30 +58,10 @@ with col_sair:
 # ==============================================================================
 # NAVEGAÇÃO
 # ==============================================================================
-pagina = st.navigation(
-    [
-        st.Page(
-            "app_pages/processamento.py",
-            title="Processamento",
-            icon=":material/play_circle:",
-            default=True,
-        ),
-        st.Page(
-            "app_pages/resumo_dia.py",
-            title="Resumo do dia",
-            icon=":material/calendar_today:",
-        ),
-        st.Page(
-            "app_pages/historico.py",
-            title="Histórico",
-            icon=":material/history:",
-        ),
-        st.Page(
-            "app_pages/administracao.py",
-            title="Administração",
-            icon=":material/settings:",
-        ),
-    ],
-    position="top",
-)
+paginas = [
+    st.Page(p["path"], title=p["titulo"], icon=p["icone"], default=p["default"])
+    for p in navegacao.montar_paginas(
+        st.session_state.get("usuario", {}).get("acesso_contas_receber", False))
+]
+pagina = st.navigation(paginas, position="top")
 pagina.run()
