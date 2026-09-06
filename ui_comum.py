@@ -15,7 +15,7 @@ import streamlit as st
 from core import obter_pasta_raiz, garantir_pastas
 
 
-VERSAO = "Criado por Leonardo Martins · Revisado por Claude Code (Anthropic) · V 4.2026.0905 · Streamlit + Lucide"
+VERSAO = "Criado por Leonardo Martins · Revisado por Claude Code (Anthropic) · V 4.2026.0906 · Streamlit + Lucide"
 
 # ---------------------------------------------------------------------------
 # CAMINHOS PRINCIPAIS
@@ -131,6 +131,25 @@ CSS = """
     .brand-bar .brand-spacer { flex-shrink: 0; width: 180px; }
     .brand-bar .brand-title { color: var(--text); font-size: 1.35rem; font-weight: 700; margin-bottom: 0.15rem; }
     .brand-bar .brand-sub { color: var(--text-muted) !important; font-size: 0.88rem; margin: 0; }
+
+    /* Badges de status do recurso (Contas a Receber) */
+    .badge-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 10px;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+    .badge-status .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        display: inline-block;
+        flex-shrink: 0;
+    }
 
     /* Chrome do Streamlit: preserva as abas de navegação (dentro do stToolbar)
        e oculta logo, ações/deploy e decoração */
@@ -302,3 +321,22 @@ def formatar_data_br(data_iso: str) -> str:
     except (ValueError, AttributeError):
         pass
     return data_iso
+
+
+# ==============================================================================
+# CONTAS A RECEBER — BADGES DE STATUS DO RECURSO
+# ==============================================================================
+CORES_STATUS = {
+    "A iniciar recurso": "#3b82f6",
+    "Em análise": "#f59e0b",
+    "Glosa Recebida": "#22c55e",
+    "Recurso Negado": "#ef4444",
+    "Livre de Glosa": "#94a3b8",
+}
+
+
+def badge_status(status: str) -> str:
+    """HTML do badge colorido do status do recurso (padrão do dashboard de glosas)."""
+    cor = CORES_STATUS.get(status, "#94a3b8")
+    return (f'<span class="badge-status" style="background:{cor}1a;color:{cor};">'
+            f'<span class="dot" style="background:{cor};"></span>{status}</span>')
