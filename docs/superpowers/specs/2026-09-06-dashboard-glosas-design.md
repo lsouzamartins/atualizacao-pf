@@ -5,7 +5,7 @@
 
 ## 1. Objetivo
 
-Sistema web dentro do app **Atualização PF** (pf.lsm.ia.br) para acompanhar **glosas de convênios a partir do DACM** (Demonstrativo de Análise de Conta) e gerir os **recursos de glosa**, com dashboard para tomada de decisões.
+Sistema web dentro do app **Atualização PF** (pf.lsm.ia.br), chamado **Contas a Receber**, para acompanhar **glosas de convênios a partir do DACM** (Demonstrativo de Análise de Conta) e gerir os **recursos de glosa**, com dashboard para tomada de decisões. O sistema nasce para glosas, mas o Leonardo pretende usá-lo para outros fins de contas a receber (nomes de tela genéricos: "Contas a Receber").
 
 Primeiro convênio: **Porto Saúde** (DACM em Excel, formato ANS). PDF será suportado depois (outros convênios não exportam Excel).
 
@@ -13,13 +13,15 @@ Primeiro convênio: **Porto Saúde** (DACM em Excel, formato ANS). PDF será sup
 
 | Decisão | Escolha |
 |---|---|
-| Arquitetura | Portal no app atual — um login só; após o login, cards "Escolha o sistema" |
+| Arquitetura | Portal no app atual — um login só; após o login, cards "Atualização PF" e "Contas a Receber" |
 | Banco | SQLite SEPARADO: `dados/dacm_glosas.db` (o banco do PF não é tocado além da flag de acesso) |
 | Fonte de dados | Upload do DACM em Excel (agora) e PDF (depois); parser por formato |
 | Convênio | Detectado automaticamente pela operadora do arquivo; nome editável na prévia |
 | Substituição (reenvio) | Chave: `(convenio, guia_prestador)`. Reenviar o DACM atualiza as guias existentes e insere as novas — nunca duplica |
 | Status do recurso | **5 status** (06/09): `A iniciar recurso` · `Em análise` · `Glosa Recebida` · `Recurso Negado` · `Livre de Glosa` |
 | Glosa zerada no reenvio | **Aviso + 1 clique** (06/09): nada muda sozinho; o painel destaca e o usuário confirma com 1 clique |
+| Alertas de prazo | **Por convênio**: cada convênio tem seu prazo de recurso em dias — o Leonardo vai informar; alerta só para convênios com prazo cadastrado |
+| Descrição do glosado | Tabelas mostram a descrição dos itens glosados (saber exatamente o que foi glosado), além dos valores |
 | Dashboard | Para tomada de decisões: % glosa, taxa de recuperação, aging, tendência mensal |
 | Interatividade | Plotly + filtros cruzados (convênio, período, status, busca) |
 | Histórico | Banco acumula todos os uploads; nada é apagado; status tem histórico por guia |
@@ -60,7 +62,7 @@ app_pages/
   upload_dacm.py      → upload com prévia, confirmação e resultado
   dashboard_glosas.py → filtros + KPIs + 4 blocos (Plotly)
   recursos_glosa.py   → painel de recursos: status, em lote, avisos, histórico
-banco.py (PF)     → + coluna usuarios.acesso_glosas (migração) e helpers
+banco.py (PF)     → + coluna usuarios.acesso_contas_receber (migração) e helpers
 administracao.py  → checkbox "Acesso ao Dashboard de Glosas" por usuário (admin)
 ```
 
@@ -70,7 +72,7 @@ administracao.py  → checkbox "Acesso ao Dashboard de Glosas" por usuário (adm
 ## 5. Banco de dados (`dados/dacm_glosas.db`)
 
 ```
-convenios     (id PK, nome UNIQUE, registro_ans, cnpj, criado_em)
+convenios     (id PK, nome UNIQUE, registro_ans, cnpj, prazo_recurso_dias INTEGER NULL, criado_em)  -- NULL = sem alerta de prazo
 uploads       (id PK, convenio_id FK, nome_arquivo, num_dacm, data_emissao,
                guias_novas, guias_atualizadas, usuario, criado_em)
 guias         (id PK, convenio_id FK, upload_id FK,
@@ -126,7 +128,7 @@ Regras do parser:
 Fluxo: escolher arquivo (.xls/.xlsx) → parser roda → **prévia** (convênio detectado com nome editável, nº DACM, data de emissão, nº de guias, guias com glosa, totais, avisos do parser, conferência: soma das guias × totais gerais) → usuário confirma → importação → resultado.
 
 Regras de importação (`banco_glosas.importar_dacm(conn, parsed, convenio_nome, usuario)`):
-1. Convênio: procura por `nome`; se não existe, cria (registro_ans/cnpj do arquivo).
+1. Convênio: procura por `nome`; se não existe, cria (registro_ans/cnpj do arquivo; `prazo_recurso_dias` fica NULL até ser cadastrado).
 2. Para cada guia:
    - **Nova** (`(convenio, guia_prestador)` não existe): insere guia + itens; `status_recurso` inicial = `A iniciar recurso` se `vl_glosa > 0`, senão `Livre de Glosa`; registra `recursos_hist` (— → inicial).
    - **Existente**: atualiza valores/totais/itens (itens são substituídos), `upload_id` passa a ser o novo; **mantém** `status_recurso`, `vl_recuperado`, `observacao`. Se `vl_glosa` anterior > 0 e novo == 0 → `aviso_glosa_zerada = 1`. Se mudar o status manualmente ou confirmar o aviso → zera o flag.
@@ -136,33 +138,34 @@ Regras de importação (`banco_glosas.importar_dacm(conn, parsed, convenio_nome,
 ## 8. Páginas
 
 ### 8.1 Portal (`portal.py`) — default após o login quando o usuário tem acesso
-2 cards grandes clicáveis (ícone + título + descrição), visual do app: **Atualização PF** e **Dashboard de Glosas**. Nav superior lista todas as páginas (grupos por sistema no título: "PF · …" e "Glosas · …").
+2 cards grandes clicáveis (ícone + título + descrição), visual do app: **Atualização PF** e **Contas a Receber** (descrição: "Dashboard de glosas e recursos — em breve outros usos"). Nav superior lista todas as páginas (grupos por sistema no título: "PF · …" e "CR · …").
 
 ### 8.2 Dashboard (`dashboard_glosas.py`)
 - **Filtros**: convênio (todos/um), período (data_inicio de/até), status do recurso.
 - **KPI cards** (visual dos modelos HTML): Total Processado · Total Liberado · Total Glosado · Taxa de Glosa (glosa/processado) · Em Recurso (a iniciar + em análise) · Taxa de Recuperação (vl_recuperado das "Glosa Recebida" / glosa total) · Perda Real (glosa das "Recurso Negado").
 - **Bloco 1 — Glosa por convênio**: barras por convênio (processado × liberado × glosado) + % de glosa.
 - **Bloco 2 — Evolução mensal**: linhas glosado × recuperado por mês (data_inicio).
-- **Bloco 3 — Painel de recursos por guia**: tabela resumo (guia, beneficiário, protocolo, glosa, status, dias em aberto desde `data_protocolo`, valor recuperado) + atalho para a página Recursos.
+- **Bloco 3 — Painel de recursos por guia**: tabela resumo (guia, beneficiário, protocolo, glosa, item glosado/motivo, status, dias em aberto desde `data_protocolo`, valor recuperado) + atalho para a página Recursos.
 - **Bloco 4 — Motivos de glosa**: ranking (barras horizontais) de descrição + código de glosa, por valor.
-- **Alertas de decisão** (cards no topo): guias "A iniciar recurso" há > 30 dias e > 60 dias (aging), guias com aviso de glosa zerada.
+- **Alertas de decisão** (cards no topo): aging das guias "A iniciar recurso" **pelo prazo do convênio** (`convenios.prazo_recurso_dias`; convênio sem prazo cadastrado não gera alerta de aging), guias com aviso de glosa zerada.
 - Gráficos: Plotly (`st.plotly_chart`), cores dos status (azul #3b82f6 / verde #22c55e / amarelo #eab308 / vermelho #ef4444), rodapé `VERSAO`.
 
 ### 8.3 Recursos de glosa (`recursos_glosa.py`)
 - Filtros: convênio, status, busca (guia/beneficiário), checkbox "somente avisos (glosa zerada)".
-- Tabela por guia: guia, beneficiário, protocolo, data protocolo, glosa, **status (edição na linha)**, **vl_recuperado**, observação.
+- Tabela por guia: guia, beneficiário, protocolo, data protocolo, glosa, **item glosado/motivo** (descrições + códigos dos itens com glosa da guia), **status (edição na linha)**, **vl_recuperado**, observação.
 - **Edição em lote**: selecionar várias (checkbox) → definir status (+ vl_recuperado) → Aplicar. Toda mudança grava em `recursos_hist` (usuário + data).
 - **Aviso de glosa zerada**: badge na linha + botão "Confirmar como Glosa Recebida" (individual) e "Confirmar todas" (lote) — 1 clique.
 - Expander por guia: histórico de mudanças (`recursos_hist`).
+- Expander "Prazos por convênio" (admin): edita `prazo_recurso_dias` de cada convênio (alimenta os alertas de aging).
 - Quando o status vira `Glosa Recebida`, `vl_recuperado` default = `vl_glosa` da guia (editável).
 
 ### 8.4 Administração (modificação)
-Seção "Acesso ao Dashboard de Glosas": checkbox por usuário (só admin enxerga/edita). Grava em `usuarios.acesso_glosas` (banco do PF).
+Seção "Acesso ao Contas a Receber": checkbox por usuário (só admin enxerga/edita). Grava em `usuarios.acesso_contas_receber` (banco do PF).
 
 ## 9. Integração com o app PF
 
-- `banco.py`: `inicializar_banco` garante a coluna `usuarios.acesso_glosas` (ALTER TABLE tolerante a já-existir); `usuario_atual()` de `auth.py` passa a incluir `acesso_glosas` na sessão.
-- `app_streamlit.py`: páginas de glosas + portal entram no `st.navigation` **somente** quando o usuário logado tem `acesso_glosas`; sem a flag, comportamento idêntico ao atual.
+- `banco.py`: `inicializar_banco` garante a coluna `usuarios.acesso_contas_receber` (ALTER TABLE tolerante a já-existir); `usuario_atual()` de `auth.py` passa a incluir `acesso_contas_receber` na sessão.
+- `app_streamlit.py`: páginas do CR + portal entram no `st.navigation` **somente** quando o usuário logado tem `acesso_contas_receber`; sem a flag, comportamento idêntico ao atual.
 - `ui_comum.py`: CSS dos cards do portal, badges de status e KPI cards; `VERSAO` nova.
 - Login, "Manter conectado", bloqueio de tentativas: inalterados.
 
@@ -185,7 +188,12 @@ Seção "Acesso ao Dashboard de Glosas": checkbox por usuário (só admin enxerg
 
 ## 13. Fora de escopo (futuro)
 
-- Parser de **PDF** (DACM ANS em PDF, pdfplumber) — mesmo formato de campos.
+- Parser de **PDF** (DACM ANS em PDF, pdfplumber) — mesmo formato de campos. **O Leonardo trará um DACM em PDF (previsão: terça 09/09/2026)** para desenvolvermos e validarmos.
 - Planilha "Detalhamento de Guias" (.xlsx com colunas montadas pelo Leonardo, ex.: Petrobras) — parser próprio por colunas (mapeamento case-insensitive).
 - Envio do relatório por **e-mail/WhatsApp** (SMTP lsm.ia.br; WhatsApp exige provedor — confirmar depois).
 - Versionamento do repositório no GitHub com deploy por Actions (pendência T11).
+
+## 14. Notas
+
+- Após o deploy, pequenos ajustes serão pedidos conforme o uso real (esperado pelo Leonardo).
+- Nome exibido do sistema: **Contas a Receber** (genérico — futuros usos além de glosas).
