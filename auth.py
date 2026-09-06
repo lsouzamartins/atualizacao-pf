@@ -82,7 +82,9 @@ def _restaurar_sessao(token):
         return False
     st.session_state["autenticado"] = True
     st.session_state["usuario"] = {"login": usuario["login"],
-                                   "admin": bool(usuario["admin"])}
+                                   "admin": bool(usuario["admin"]),
+                                   "acesso_contas_receber":
+                                       bool(usuario["acesso_contas_receber"])}
     st.session_state["token_sessao"] = token
     return True
 
@@ -134,7 +136,9 @@ def exigir_login():
                         token = banco.criar_sessao(conn, login.strip())
                         st.session_state["autenticado"] = True
                         st.session_state["usuario"] = {"login": login.strip(),
-                                                       "admin": bool(usuario["admin"])}
+                                                       "admin": bool(usuario["admin"]),
+                                                       "acesso_contas_receber":
+                                                           bool(usuario["acesso_contas_receber"])}
                         st.session_state["token_sessao"] = token
                         st.rerun()
                     else:

@@ -260,3 +260,55 @@ def test_historico_filtra_por_convenio(tmp_path):
     assert banco.arquivos_da_execucao(conn, 999) == []
     conn.close()
 
+
+def test_migracao_acesso_contas_receber_banca_antigo_sem_coluna(tmp_path):
+    """Banco criado ANTES da feature ganha a coluna ao inicializar."""
+    db = str(tmp_path / "pf_antigo.db")
+    conn_antigo = sqlite3.connect(db)
+    conn_antigo.execute("""CREATE TABLE usuarios (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        login TEXT UNIQUE NOT NULL,
+        nome TEXT NOT NULL,
+        senha_hash TEXT NOT NULL,
+        admin INTEGER NOT NULL DEFAULT 0,
+        falhas_seguidas INTEGER NOT NULL DEFAULT 0,
+        bloqueado_ate TEXT,
+        criado_em TEXT NOT NULL
+    )""")
+    conn_antigo.commit()
+    conn_antigo.close()
+
+    conn = banco.conectar(db)
+    banco.inicializar_banco(conn)  # não pode quebrar
+    banco.inicializar_banco(conn)  # idempotente
+    colunas = [r["name"] for r in conn.execute("PRAGMA table_info(usuarios)").fetchall()]
+    assert "acesso_contas_receber" in colunas
+    conn.close()
+
+
+def test_definir_acesso_contas_receber_e_listar(tmp_path):
+    db = str(tmp_path / "pf.db")
+    conn = banco.conectar(db); banco.inicializar_banco(conn)
+    login = "alguem_cr"
+    banco.criar_usuario(conn, login, "Alguém", "senha12345")
+    assert [r["acesso_contas_receber"] for r in banco.listar_usuarios(conn)
+            if r["login"] == login] == [0]
+    banco.definir_acesso_contas_receber(conn, login, True)
+    assert [r["acesso_contas_receber"] for r in banco.listar_usuarios(conn)
+            if r["login"] == login] == [1]
+    banco.definir_acesso_contas_receber(conn, login, False)
+    assert [r["acesso_contas_receber"] for r in banco.listar_usuarios(conn)
+            if r["login"] == login] == [0]
+    conn.close()
+
+
+def test_autenticar_devolve_acesso_contas_receber(tmp_path):
+    db = str(tmp_path / "pf.db")
+    conn = banco.conectar(db); banco.inicializar_banco(conn)
+    login = "com_acesso"
+    banco.criar_usuario(conn, login, "Com Acesso", "senha12345")
+    banco.definir_acesso_contas_receber(conn, login, True)
+    usuario = banco.autenticar(conn, login, "senha12345")
+    assert usuario is not None and usuario["acesso_contas_receber"] == 1
+    conn.close()
+
