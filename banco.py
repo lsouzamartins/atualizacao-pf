@@ -281,6 +281,14 @@ def gravar_resumos(conn, execucao_id, df):
     return len(linhas)
 
 
+def concluir_sucesso(conn, execucao_id, arquivos, df):
+    """Fecha a execução como sucesso e grava os resumos diários. Chamar com a
+    conexão AINDA ABERTA — nunca depois de conn.close() (bug da execução 20:
+    o registro ficava 'em_andamento' para sempre)."""
+    finalizar_execucao(conn, execucao_id, "sucesso", "", arquivos)
+    gravar_resumos(conn, execucao_id, df)
+
+
 def resumos_disponiveis(conn):
     return [r["data"] for r in conn.execute(
         "SELECT DISTINCT data FROM resumos_diarios ORDER BY data DESC")]

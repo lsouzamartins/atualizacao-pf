@@ -1,3 +1,5 @@
+import sqlite3
+
 import pytest
 import pandas as pd
 import banco
@@ -157,6 +159,39 @@ def test_criar_sessao_limpa_sessoes_expiradas(tmp_path):
     assert banco.validar_token_sessao(conn, token2,
                                       agora="2026-09-06T10:00:00")["login"] == "leo"
     conn.close()
+
+def test_concluir_sucesso_grava_status_e_resumos(tmp_path):
+    db = str(tmp_path / "pf.db")
+    conn = banco.conectar(db); banco.inicializar_banco(conn)
+    eid = banco.iniciar_execucao(conn, "leo", agora="2026-09-05T10:00:00")
+    df = pd.DataFrame({
+        "data": ["2026-09-05"], "convenio": ["BRADESCO"],
+        "vlr_bruto": [100.0], "vlr_liquido": [90.0],
+        "quitado": [0.0], "nao_identificado": [10.0],
+    })
+    banco.concluir_sucesso(conn, eid, ["a.xlsx"], df)
+    row = conn.execute("SELECT status, fim FROM execucoes WHERE id=?",
+                       (eid,)).fetchone()
+    assert row["status"] == "sucesso" and row["fim"] is not None
+    assert banco.arquivos_da_execucao(conn, eid) == ["a.xlsx"]
+    assert len(banco.historico(conn)) == 1
+    conn.close()
+
+def test_concluir_sucesso_com_conexao_fechada_falha(tmp_path):
+    # Bug da execução 20 (05/09/2026): o bloco de sucesso da página rodava
+    # DEPOIS do conn.close() do finally — o registro ficava 'em_andamento'
+    # para sempre e os resumos nunca eram gravados.
+    db = str(tmp_path / "pf.db")
+    conn = banco.conectar(db); banco.inicializar_banco(conn)
+    eid = banco.iniciar_execucao(conn, "leo")
+    conn.close()
+    df = pd.DataFrame({
+        "data": ["2026-09-05"], "convenio": ["BRADESCO"],
+        "vlr_bruto": [100.0], "vlr_liquido": [90.0],
+        "quitado": [0.0], "nao_identificado": [10.0],
+    })
+    with pytest.raises(sqlite3.ProgrammingError):
+        banco.concluir_sucesso(conn, eid, ["a.xlsx"], df)
 
 def test_historico_filtra_por_convenio(tmp_path):
     db = str(tmp_path / "pf.db")

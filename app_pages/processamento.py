@@ -202,11 +202,6 @@ if executar and not st.session_state.em_andamento:
     finally:
         shutil.rmtree(pasta_sessao, ignore_errors=True)
         st.session_state.em_andamento = False
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
 
     if sucesso:
         try:
@@ -214,11 +209,19 @@ if executar and not st.session_state.em_andamento:
             arquivos_gerados = [os.path.basename(xlsx_hias_final),
                                 os.path.basename(xlsx_wpd_limpo),
                                 os.path.basename(xlsx_nao_identificado_limpo)]
-            banco.finalizar_execucao(conn, execucao_id, "sucesso", "", arquivos_gerados)
-            banco.gravar_resumos(conn, execucao_id, df_resumos)
+            # grava com a conexão AINDA ABERTA (bug da execução 20: o close
+            # acontecia no finally, antes desta gravação)
+            banco.concluir_sucesso(conn, execucao_id, arquivos_gerados, df_resumos)
         except Exception as e:
             print(f"[AVISO] Processamento OK, mas falha ao gravar no banco: {e}")
             st.warning(f"Processamento OK, mas falha ao gravar no banco: {e}")
+
+    # A conexão só é fechada aqui, DEPOIS da gravação do resultado
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
     log_texto = log_buffer.getvalue()
     if execucao_id is not None:
