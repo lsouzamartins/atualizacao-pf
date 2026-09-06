@@ -11,20 +11,29 @@ import base64
 import io
 import os
 import re
+import urllib.parse
 
 from PIL import Image
 
 EXTENSOES_PERMITIDAS = {".png", ".jpg", ".jpeg"}
 TAMANHO_MAXIMO_BYTES = 2 * 1024 * 1024  # 2 MB
-# Login seguro para nome de arquivo: letras, números, ponto, traço, sublinhado
-_RE_LOGIN_SEGURO = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+# Login usado direto como nome de arquivo: letras (com acento), números,
+# ponto, traço e sublinhado — nada que seja separador de caminho.
+_RE_LOGIN_SEGURO = re.compile(r"^[\w.-]{1,64}$")
 
 
-def _login_seguro(login):
+def _nome_arquivo(login):
+    """Nome de arquivo seguro para a foto do login (nunca escapa da pasta).
+
+    Logins comuns (letras, acentos, números, ._-) viram '<login>.png';
+    qualquer outro caractere é neutralizado com percent-encoding — assim
+    nenhum login do banco quebra a página ou vira caminho malicioso."""
     login = (login or "").strip()
-    if not _RE_LOGIN_SEGURO.match(login):
+    if not login:
         raise ValueError("Login inválido para nome de arquivo.")
-    return login
+    if _RE_LOGIN_SEGURO.match(login):
+        return login + ".png"
+    return urllib.parse.quote(login, safe="") + ".png"
 
 
 def validar_foto(dados: bytes, nome_original: str = "") -> tuple:
@@ -48,14 +57,14 @@ def validar_foto(dados: bytes, nome_original: str = "") -> tuple:
 def salvar_foto(pasta_fotos: str, login: str, dados: bytes, nome_original: str = "") -> str:
     """Valida, converte para PNG e grava <pasta>/<login>.png (substituição
     atômica). Devolve o caminho gravado; ValueError se a foto for inválida."""
-    login = _login_seguro(login)
+    nome = _nome_arquivo(login)
     ok, erro = validar_foto(dados, nome_original)
     if not ok:
         raise ValueError(erro)
     os.makedirs(pasta_fotos, exist_ok=True)
     with Image.open(io.BytesIO(dados)) as img:
         imagem = img.convert("RGB")
-        destino = os.path.join(pasta_fotos, login + ".png")
+        destino = os.path.join(pasta_fotos, nome)
         temporario = destino + ".tmp"
         imagem.save(temporario, "PNG")
         os.replace(temporario, destino)
@@ -64,8 +73,7 @@ def salvar_foto(pasta_fotos: str, login: str, dados: bytes, nome_original: str =
 
 def remover_foto(pasta_fotos: str, login: str) -> bool:
     """Apaga a foto do usuário; True se havia foto, False se não havia."""
-    login = _login_seguro(login)
-    caminho = os.path.join(pasta_fotos, login + ".png")
+    caminho = os.path.join(pasta_fotos, _nome_arquivo(login))
     if os.path.exists(caminho):
         os.remove(caminho)
         return True
@@ -73,14 +81,12 @@ def remover_foto(pasta_fotos: str, login: str) -> bool:
 
 
 def tem_foto(pasta_fotos: str, login: str) -> bool:
-    login = _login_seguro(login)
-    return os.path.exists(os.path.join(pasta_fotos, login + ".png"))
+    return os.path.exists(os.path.join(pasta_fotos, _nome_arquivo(login)))
 
 
 def foto_base64(pasta_fotos: str, login: str):
     """Data URI da foto (para <img> no cartão de login) ou None se não houver."""
-    login = _login_seguro(login)
-    caminho = os.path.join(pasta_fotos, login + ".png")
+    caminho = os.path.join(pasta_fotos, _nome_arquivo(login))
     if not os.path.exists(caminho):
         return None
     with open(caminho, "rb") as f:

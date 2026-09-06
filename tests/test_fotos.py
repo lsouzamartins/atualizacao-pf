@@ -63,9 +63,19 @@ def test_tem_foto_e_remover_foto(tmp_path):
     assert fotos.remover_foto(str(tmp_path), "leo") is False
 
 
-def test_login_com_barra_e_rejeitado(tmp_path):
-    # proteção contra path traversal no nome do arquivo
-    with pytest.raises(ValueError):
-        fotos.salvar_foto(str(tmp_path), "../etc/passwd", _png_bytes(), "foto.png")
-    with pytest.raises(ValueError):
-        fotos.tem_foto(str(tmp_path), "..\\..\\x")
+def test_login_com_acento_e_aceito(tmp_path):
+    # logins reais têm acento (ex.: lslameirão) — devem virar nome de arquivo
+    destino = fotos.salvar_foto(str(tmp_path), "lslameirão", _png_bytes(), "foto.png")
+    assert os.path.exists(destino) and destino.endswith("lslameirão.png")
+    assert fotos.tem_foto(str(tmp_path), "lslameirão") is True
+    assert fotos.foto_base64(str(tmp_path), "lslameirão").startswith("data:image/png;base64,")
+
+
+def test_login_com_barra_vira_nome_seguro(tmp_path):
+    # proteção contra path traversal: o nome é neutralizado e o arquivo
+    # fica DENTRO da pasta de fotos (nunca escapa nem quebra a página)
+    destino = fotos.salvar_foto(str(tmp_path), "../etc/passwd", _png_bytes(), "foto.png")
+    assert os.path.dirname(destino) == str(tmp_path)
+    assert "/" not in os.path.basename(destino) and destino.endswith(".png")
+    assert fotos.tem_foto(str(tmp_path), "../etc/passwd") is True
+    assert fotos.remover_foto(str(tmp_path), "..\\..\\x") is False
