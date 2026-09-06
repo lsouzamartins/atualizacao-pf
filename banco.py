@@ -335,7 +335,11 @@ def resumos_do_dia(conn, data):
 def historico(conn, de=None, ate=None, convenio=None):
     """Linhas de resumos_diarios unidas às execuções, no período [de, ate]
     (datas no formato 'YYYY-MM-DD'). convenio opcional: filtra por igualdade
-    exata do nome do convênio (SQL parametrizado)."""
+    exata do nome do convênio (SQL parametrizado).
+
+    Cada reprocessamento grava de novo os resumos dos mesmos dias — para
+    cada data vale a execução MAIS RECENTE que a gravou (posição atual do
+    dia), como na página Resumo do dia; sem linhas repetidas."""
     sql = ("SELECT e.id AS execucao_id, e.usuario, e.status, r.data, r.convenio, "
            "r.vlr_bruto, r.vlr_liquido, r.quitado, r.nao_identificado "
            "FROM resumos_diarios r JOIN execucoes e ON e.id = r.execucao_id WHERE 1=1")
@@ -346,6 +350,8 @@ def historico(conn, de=None, ate=None, convenio=None):
         sql += " AND r.data <= ?"; params.append(ate)
     if convenio:
         sql += " AND r.convenio = ?"; params.append(convenio)
+    sql += (" AND r.execucao_id = (SELECT MAX(r2.execucao_id) FROM resumos_diarios r2 "
+            "WHERE r2.data = r.data)")
     sql += " ORDER BY r.data DESC, e.id DESC"
     return pd.read_sql_query(sql, conn, params=params)
 

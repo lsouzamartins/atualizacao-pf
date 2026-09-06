@@ -201,6 +201,39 @@ def test_login_existe(tmp_path):
     assert banco.login_existe(conn, " leo ") is True
     conn.close()
 
+def test_historico_mostra_so_a_execucao_mais_recente_por_data(tmp_path):
+    """Cada reprocessamento grava de novo os resumos do mesmo dia; a grade
+    deve mostrar só a execução MAIS RECENTE de cada data (posição atual),
+    sem linhas repetidas do mesmo dia+convênio."""
+    db = str(tmp_path / "pf.db")
+    conn = banco.conectar(db); banco.inicializar_banco(conn)
+    eid1 = banco.registrar_execucao(conn, "leo", "sucesso", "", ["a.xlsx"])
+    eid2 = banco.registrar_execucao(conn, "ana", "sucesso", "", ["b.xlsx"])
+    df_bradesco = pd.DataFrame({
+        "data": ["2026-09-02"], "convenio": ["BRADESCO OPERADORA PLANO"],
+        "vlr_bruto": [17151.47], "vlr_liquido": [17151.47],
+        "quitado": [0.0], "nao_identificado": [0.0],
+    })
+    banco.gravar_resumos(conn, eid1, df_bradesco)
+    banco.gravar_resumos(conn, eid2, df_bradesco)
+    tudo = banco.historico(conn)
+    assert len(tudo) == 1
+    assert tudo.iloc[0]["execucao_id"] == eid2
+    assert tudo.iloc[0]["convenio"] == "BRADESCO OPERADORA PLANO"
+    # outra data gravada só pela execução antiga continua visível
+    df_geap = pd.DataFrame({
+        "data": ["2026-09-01"], "convenio": ["GEAP"],
+        "vlr_bruto": [200.0], "vlr_liquido": [180.0],
+        "quitado": [0.0], "nao_identificado": [20.0],
+    })
+    banco.gravar_resumos(conn, eid1, df_geap)
+    tudo = banco.historico(conn)
+    assert len(tudo) == 2
+    assert set(tudo["convenio"]) == {"BRADESCO OPERADORA PLANO", "GEAP"}
+    assert tudo[tudo["convenio"] == "GEAP"].iloc[0]["execucao_id"] == eid1
+    conn.close()
+
+
 def test_historico_filtra_por_convenio(tmp_path):
     db = str(tmp_path / "pf.db")
     conn = banco.conectar(db); banco.inicializar_banco(conn)
