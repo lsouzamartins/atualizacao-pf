@@ -16,7 +16,7 @@ PASTA_LOGS = pastas()["logs"]
 # ==============================================================================
 # EXECUÇÕES — todas as execuções registradas, com o log completo de cada uma
 # ==============================================================================
-st.markdown(f"#### {icone('scroll-text', 20, '#1C5A8A')} Execuções")
+st.markdown(f"#### {icone('scroll-text', 20, '#1C5A8A')} Execuções", unsafe_allow_html=True)
 execucoes = banco.listar_execucoes(conn, limite=20)
 if not execucoes:
     st.info("Nenhuma execução registrada ainda.")
@@ -63,7 +63,7 @@ st.divider()
 # ==============================================================================
 # RESUMOS DIÁRIOS
 # ==============================================================================
-st.markdown(f"#### {icone('calendar', 20, '#1C5A8A')} Resumos diários por convênio")
+st.markdown(f"#### {icone('calendar', 20, '#1C5A8A')} Resumos diários por convênio", unsafe_allow_html=True)
 datas = banco.resumos_disponiveis(conn)
 if datas:
     convenios = banco.convenios_disponiveis(conn)
