@@ -208,3 +208,22 @@ def test_reenvio_zerado_depois_da_confirmacao_nao_reavisa(conn, tmp_path):
     r = banco_glosas.importar_dacm(conn, _parsed([_guia(glosa=0)]), "Porto Saúde", "lsmartins", str(arquivo))
     assert r["avisos_glosa_zerada"] == 0
     assert banco_glosas.guias_filtradas(conn)[0]["aviso_glosa_zerada"] == 0
+
+
+def test_diff_guias_editadas_celulas_limpas_nao_quebram():
+    """Célula limpa no data_editor chega como None/NaN — não pode quebrar o diff
+    e sai como None para registrar_status manter o valor atual."""
+    import pandas as pd
+    antes = pd.DataFrame([
+        {"guia_id": 1, "status": "Em análise", "vl_recuperado": 0.0,
+         "observacao": ""}])
+    depois = pd.DataFrame([
+        {"guia_id": 1, "status": "Em análise", "vl_recuperado": None,
+         "observacao": None}])
+    assert banco_glosas.diff_guias_editadas(antes, depois) == []
+    depois2 = pd.DataFrame([
+        {"guia_id": 1, "status": "Glosa Recebida", "vl_recuperado": None,
+         "observacao": None}])
+    assert banco_glosas.diff_guias_editadas(antes, depois2) == [
+        {"guia_id": 1, "status": "Glosa Recebida",
+         "vl_recuperado": None, "observacao": None}]

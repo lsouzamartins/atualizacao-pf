@@ -30,8 +30,8 @@ if guias:
         {"selecionar": False, "guia_id": g["guia_id"], "Guia": g["guia_prestador"],
          "Beneficiário": g["beneficiario"], "Convênio": g["convenio"],
          "Glosa": g["vl_glosa"], "Motivo": g["motivo"] or "—",
-         "Status": g["status_recurso"], "Vl. Recuperado": g["vl_recuperado"],
-         "Observação": g["observacao"], "Aviso": bool(g["aviso_glosa_zerada"])}
+         "status": g["status_recurso"], "vl_recuperado": g["vl_recuperado"],
+         "observacao": g["observacao"], "Aviso": bool(g["aviso_glosa_zerada"])}
         for g in guias])
     if "snapshot_recursos" not in st.session_state:
         st.session_state["snapshot_recursos"] = df.copy()
@@ -42,10 +42,10 @@ if guias:
             "selecionar": st.column_config.CheckboxColumn("Selecionar", default=False),
             "Glosa": st.column_config.NumberColumn("Glosa", format="R$ %.2f", disabled=True),
             "Aviso": st.column_config.CheckboxColumn("Glosa zerada", disabled=True),
-            "Status": st.column_config.SelectboxColumn(
+            "status": st.column_config.SelectboxColumn(
                 "Status", options=banco_glosas.STATUS, required=True),
-            "Vl. Recuperado": st.column_config.NumberColumn("Vl. Recuperado", format="R$ %.2f"),
-            "Observação": st.column_config.TextColumn("Observação"),
+            "vl_recuperado": st.column_config.NumberColumn("Vl. Recuperado", format="R$ %.2f"),
+            "observacao": st.column_config.TextColumn("Observação"),
         })
     if st.button("Salvar alterações", type="primary"):
         alteradas = banco_glosas.diff_guias_editadas(

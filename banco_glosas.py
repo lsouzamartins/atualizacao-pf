@@ -304,18 +304,22 @@ def historico_status(conn, guia_id):
 
 def diff_guias_editadas(antes, depois):
     """Linhas alteradas entre o snapshot e o data_editor: [{guia_id, status,
-    vl_recuperado, observacao}] só com o que mudou."""
+    vl_recuperado, observacao}] só com o que mudou. Células limpas no editor
+    chegam como None/NaN e saem como None (registrar_status mantém o atual)."""
     indices = set(antes["guia_id"]) & set(depois["guia_id"])
     alteradas = []
     for gid in indices:
         a = antes[antes["guia_id"] == gid].iloc[0]
         d = depois[depois["guia_id"] == gid].iloc[0]
-        if (a["status"] != d["status"]
-                or float(a["vl_recuperado"]) != float(d["vl_recuperado"])
-                or str(a["observacao"]) != str(d["observacao"])):
-            alteradas.append({"guia_id": int(gid), "status": d["status"],
-                              "vl_recuperado": float(d["vl_recuperado"]),
-                              "observacao": str(d["observacao"])})
+        vl_a = 0.0 if pd.isna(a["vl_recuperado"]) else float(a["vl_recuperado"])
+        vl_d = 0.0 if pd.isna(d["vl_recuperado"]) else float(d["vl_recuperado"])
+        obs_a = "" if pd.isna(a["observacao"]) else str(a["observacao"])
+        obs_d = "" if pd.isna(d["observacao"]) else str(d["observacao"])
+        if a["status"] != d["status"] or vl_a != vl_d or obs_a != obs_d:
+            alteradas.append({
+                "guia_id": int(gid), "status": d["status"],
+                "vl_recuperado": None if pd.isna(d["vl_recuperado"]) else float(d["vl_recuperado"]),
+                "observacao": None if pd.isna(d["observacao"]) else str(d["observacao"])})
     return alteradas
 
 
