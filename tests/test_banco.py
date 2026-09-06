@@ -100,6 +100,64 @@ def test_lista_execucoes_mais_recente_primeiro_com_limite(tmp_path):
     assert [r["status"] for r in linhas] == ["sucesso", "sucesso"]
     conn.close()
 
+def test_criar_sessao_grava_hash_e_expira_em_7_dias(tmp_path):
+    db = str(tmp_path / "pf.db")
+    conn = banco.conectar(db); banco.inicializar_banco(conn)
+    banco.criar_usuario(conn, "leo", "Leo", "senha12345")
+    token = banco.criar_sessao(conn, "leo", agora="2026-09-05T10:00:00")
+    assert token and "senha" not in token
+    row = conn.execute("SELECT * FROM sessoes").fetchone()
+    # no banco fica só o hash — nunca o token em claro
+    assert row["token_hash"] != token
+    assert row["login"] == "leo"
+    assert row["expira_em"] == "2026-09-12T10:00:00"
+    conn.close()
+
+def test_validar_token_sessao_dentro_da_validade(tmp_path):
+    db = str(tmp_path / "pf.db")
+    conn = banco.conectar(db); banco.inicializar_banco(conn)
+    banco.criar_usuario(conn, "leo", "Leo", "senha12345")
+    token = banco.criar_sessao(conn, "leo", agora="2026-09-05T10:00:00")
+    usuario = banco.validar_token_sessao(conn, token, agora="2026-09-11T23:59:59")
+    assert usuario is not None and usuario["login"] == "leo"
+    # token errado → None
+    assert banco.validar_token_sessao(conn, "token-invalido",
+                                       agora="2026-09-06T10:00:00") is None
+    conn.close()
+
+def test_sessao_expirada_devolve_none_e_e_apagada(tmp_path):
+    db = str(tmp_path / "pf.db")
+    conn = banco.conectar(db); banco.inicializar_banco(conn)
+    banco.criar_usuario(conn, "leo", "Leo", "senha12345")
+    token = banco.criar_sessao(conn, "leo", agora="2026-09-05T10:00:00")
+    assert banco.validar_token_sessao(conn, token,
+                                      agora="2026-09-12T10:00:01") is None
+    # a linha expirada some do banco
+    assert conn.execute("SELECT COUNT(*) FROM sessoes").fetchone()[0] == 0
+    conn.close()
+
+def test_remover_sessao_invalida_o_token(tmp_path):
+    db = str(tmp_path / "pf.db")
+    conn = banco.conectar(db); banco.inicializar_banco(conn)
+    banco.criar_usuario(conn, "leo", "Leo", "senha12345")
+    token = banco.criar_sessao(conn, "leo", agora="2026-09-05T10:00:00")
+    banco.remover_sessao(conn, token)
+    assert banco.validar_token_sessao(conn, token,
+                                      agora="2026-09-06T10:00:00") is None
+    conn.close()
+
+def test_criar_sessao_limpa_sessoes_expiradas(tmp_path):
+    db = str(tmp_path / "pf.db")
+    conn = banco.conectar(db); banco.inicializar_banco(conn)
+    banco.criar_usuario(conn, "leo", "Leo", "senha12345")
+    banco.criar_sessao(conn, "leo", agora="2026-08-01T10:00:00")  # já expirou
+    token2 = banco.criar_sessao(conn, "leo", agora="2026-09-05T10:00:00")
+    linhas = conn.execute("SELECT login FROM sessoes ORDER BY id").fetchall()
+    assert [r["login"] for r in linhas] == ["leo"]  # só a sessão nova ficou
+    assert banco.validar_token_sessao(conn, token2,
+                                      agora="2026-09-06T10:00:00")["login"] == "leo"
+    conn.close()
+
 def test_historico_filtra_por_convenio(tmp_path):
     db = str(tmp_path / "pf.db")
     conn = banco.conectar(db); banco.inicializar_banco(conn)

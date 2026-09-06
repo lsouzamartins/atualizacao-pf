@@ -3,12 +3,15 @@
 AUTENTICAÇÃO — ATUALIZAÇÃO PF · NUVEM
 Contas individuais (bcrypt), sessão por aba (st.session_state),
 5 falhas → bloqueio de 5 minutos (persistido no banco).
+"Manter conectado": cookie pf_sessao (token de 7 dias, só hash no banco).
 ==============================================================================
 """
 import streamlit as st
 
 import banco
 from ui_comum import injetar_css_login
+
+NOME_COOKIE = "pf_sessao"
 
 
 def _conexao():
@@ -35,15 +38,36 @@ def usuario_atual():
     return st.session_state.get("usuario")
 
 
+def _restaurar_sessao(token):
+    """Loga automaticamente se o token do cookie for válido (máx. 7 dias)."""
+    conn = _conexao()
+    try:
+        banco.inicializar_banco(conn)
+        usuario = banco.validar_token_sessao(conn, token)
+    finally:
+        conn.close()
+    if usuario is None:
+        return False
+    st.session_state["autenticado"] = True
+    st.session_state["usuario"] = {"login": usuario["login"],
+                                   "admin": bool(usuario["admin"])}
+    st.session_state["token_sessao"] = token
+    return True
+
+
 def exigir_login():
     """Gate de todas as páginas. Sem usuário autenticado, só o formulário renderiza.
 
     Tela de login: título no topo centralizado, cartão branco com o formulário
     no centro da página. A lógica de autenticação é a mesma da versão anterior
-    (bloqueio de 5 minutos, sessão por aba).
+    (bloqueio de 5 minutos, sessão por aba) + "manter conectado" por 7 dias.
     """
     if st.session_state.get("autenticado"):
         return
+    # "Manter conectado": cookie gravado pelo navegador → login automático
+    token = st.context.cookies.get(NOME_COOKIE)
+    if token and _restaurar_sessao(token):
+        st.rerun()
     injetar_css_login()
     st.markdown('<div class="login-titulo-pagina">Atualização da Posição Financeira</div>',
                 unsafe_allow_html=True)
@@ -62,15 +86,18 @@ def exigir_login():
         if st.button("Entrar", type="primary", width="stretch", key="login_entrar"):
             conn = _conexao()
             try:
+                banco.inicializar_banco(conn)  # garante as tabelas (inclusive sessoes)
                 pode, _ = banco.pode_tentar(conn, login.strip())
                 if not pode:
                     st.error("Muitas tentativas erradas. Aguarde 5 minutos e tente de novo.")
                 else:
                     usuario = banco.autenticar(conn, login.strip(), senha)
                     if usuario is not None:
+                        token = banco.criar_sessao(conn, login.strip())
                         st.session_state["autenticado"] = True
                         st.session_state["usuario"] = {"login": login.strip(),
                                                        "admin": bool(usuario["admin"])}
+                        st.session_state["token_sessao"] = token
                         st.rerun()
                     else:
                         banco.registrar_falha(conn, login.strip())
@@ -81,6 +108,41 @@ def exigir_login():
     st.stop()
 
 
+def manter_cookie_sessao():
+    """Grava o cookie 'pf_sessao' no navegador via componente invisível.
+
+    O Streamlit 1.60 não tem API de escrita de cookies (st.cookies só chega
+    em versões posteriores); o JS do iframe grava document.cookie (mesma
+    origem, permitido pelo sandbox) e o st.context.cookies o lê na próxima
+    carga da página.
+    """
+    token = st.session_state.get("token_sessao")
+    if not token:
+        return
+    st.components.v1.html(
+        "<script>"
+        f"document.cookie = \"{NOME_COOKIE}={token}; max-age=604800; path=/; SameSite=Lax; Secure\";"
+        "</script>",
+        height=0, width=0,
+    )
+
+
 def sair():
-    if st.session_state.get("autenticado"):
-        st.button("Sair", on_click=lambda: st.session_state.clear())
+    if not st.session_state.get("autenticado"):
+        return
+
+    def _sair():
+        # Invalida a sessão no banco (o cookie restante no navegador vira
+        # token morto) e limpa a sessão da aba.
+        token = st.session_state.get("token_sessao")
+        if token:
+            try:
+                conn = banco.conectar()
+                banco.inicializar_banco(conn)
+                banco.remover_sessao(conn, token)
+                conn.close()
+            except Exception:
+                pass
+        st.session_state.clear()
+
+    st.button("Sair", on_click=_sair)

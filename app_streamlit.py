@@ -39,6 +39,8 @@ st.set_page_config(
 # GATE DE LOGIN — sem usuário autenticado, nada além do formulário renderiza
 # ==============================================================================
 auth.exigir_login()
+# "Manter conectado": grava o cookie de sessão no navegador (componente invisível)
+auth.manter_cookie_sessao()
 
 
 # ==============================================================================

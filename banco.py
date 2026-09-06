@@ -6,6 +6,8 @@ SQLite (WAL) em dados/pf.db. Uma conexão por operação; nunca compartilhada.
 """
 import os
 import json
+import secrets
+import hashlib
 import sqlite3
 from datetime import datetime, timedelta
 
@@ -45,10 +47,19 @@ CREATE TABLE IF NOT EXISTS resumos_diarios (
   nao_identificado REAL NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_resumos_data ON resumos_diarios(data);
+CREATE TABLE IF NOT EXISTS sessoes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  login TEXT NOT NULL,
+  token_hash TEXT NOT NULL,
+  criado_em TEXT NOT NULL,
+  expira_em TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sessoes_hash ON sessoes(token_hash);
 """
 
 BLOQUEIO_MINUTOS = 5
 MAX_FALHAS = 5
+DURACAO_SESSAO_DIAS = 7
 
 
 def conectar(caminho=None):
@@ -166,6 +177,56 @@ def remover_usuario(conn, login_alvo, login_operador):
     conn.execute("DELETE FROM usuarios WHERE id=?", (alvo["id"],))
     conn.commit()
     return {"ok": True}
+
+
+# ==============================================================================
+# SESSÕES "MANTER CONECTADO" (7 dias)
+# ==============================================================================
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def criar_sessao(conn, login, agora=None):
+    """Cria uma sessão "manter conectado" (7 dias) e devolve o token — que
+    aparece só aqui; no banco fica apenas o hash. Também limpa expiradas."""
+    limpar_sessoes_expiradas(conn, agora)
+    agora = datetime.fromisoformat(agora) if agora else datetime.now()
+    token = secrets.token_urlsafe(32)
+    expira = agora + timedelta(days=DURACAO_SESSAO_DIAS)
+    conn.execute(
+        "INSERT INTO sessoes (login, token_hash, criado_em, expira_em) VALUES (?, ?, ?, ?)",
+        (login, _hash_token(token), agora.isoformat(), expira.isoformat()))
+    conn.commit()
+    return token
+
+
+def validar_token_sessao(conn, token, agora=None):
+    """Devolve o dict do usuário da sessão do token; None se inválida ou
+    expirada (sessões expiradas são apagadas)."""
+    agora = datetime.fromisoformat(agora) if agora else datetime.now()
+    row = conn.execute(
+        "SELECT * FROM sessoes WHERE token_hash=?", (_hash_token(token),)).fetchone()
+    if row is None:
+        return None
+    if datetime.fromisoformat(row["expira_em"]) <= agora:
+        conn.execute("DELETE FROM sessoes WHERE id=?", (row["id"],))
+        conn.commit()
+        return None
+    usuario = conn.execute(
+        "SELECT * FROM usuarios WHERE login=?", (row["login"],)).fetchone()
+    return dict(usuario) if usuario is not None else None
+
+
+def remover_sessao(conn, token):
+    """Apaga a sessão do token (botão 'Sair')."""
+    conn.execute("DELETE FROM sessoes WHERE token_hash=?", (_hash_token(token),))
+    conn.commit()
+
+
+def limpar_sessoes_expiradas(conn, agora=None):
+    agora = datetime.fromisoformat(agora) if agora else datetime.now()
+    conn.execute("DELETE FROM sessoes WHERE expira_em <= ?", (agora.isoformat(),))
+    conn.commit()
 
 
 def iniciar_execucao(conn, usuario, agora=None):
