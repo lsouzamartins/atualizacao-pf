@@ -69,7 +69,7 @@ with st.form("remover_usuario"):
             else:
                 st.error(resultado["erro"])
 
-st.markdown(f"#### {icone('camera', 18)} Foto do usuário (login)")
+st.markdown(f"#### {icone('camera', 18)} Foto do usuário (login)", unsafe_allow_html=True)
 st.caption("Foto exibida no cartão de login. O arquivo é guardado no tamanho "
            "original, sem cortes (PNG ou JPG, máx. 2 MB).")
 alvo_foto = st.selectbox("Usuário", logins, key="foto_alvo")
