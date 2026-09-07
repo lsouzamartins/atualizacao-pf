@@ -120,7 +120,8 @@ if todas:
 
 # ---- PRAZOS POR CONVÊNIO (ADMIN) ----
 if st.session_state["usuario"]["admin"]:
-    with st.expander(f"{icone('alarm-clock', 18)} Prazos por convênio (alertas)"):
+    with st.expander(f"{icone('alarm-clock', 18)} Prazos por convênio (alertas)",
+                     unsafe_allow_html=True):
         for c in convenios:
             c1, c2 = st.columns([3, 1])
             atual = c["prazo_recurso_dias"]
