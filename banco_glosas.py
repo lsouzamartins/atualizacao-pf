@@ -341,8 +341,9 @@ def motivo_glosado(conn, guia_id):
 
 
 def guias_filtradas(conn, convenio_id=None, status=None, busca=None, de=None, ate=None,
-                    somente_avisos=False):
-    """Guias como dicts (inclui guia_id, convenio e motivo glosado)."""
+                    somente_avisos=False, motivo=None):
+    """Guias como dicts (inclui guia_id, convenio e motivo glosado).
+    motivo é o texto exato retornado por motivo_glosado (filtro em Python)."""
     sql = ("SELECT g.id AS guia_id, g.*, c.nome AS convenio "
            "FROM guias g JOIN convenios c ON c.id = g.convenio_id WHERE 1=1")
     params = []
@@ -363,12 +364,15 @@ def guias_filtradas(conn, convenio_id=None, status=None, busca=None, de=None, at
     linhas = [dict(r) for r in conn.execute(sql, params).fetchall()]
     for linha in linhas:
         linha["motivo"] = motivo_glosado(conn, linha["guia_id"])
+    if motivo:
+        linhas = [l for l in linhas if l["motivo"] == motivo]
     return linhas
 
 
-def resumo_kpis(conn, convenio_id=None, de=None, ate=None):
+def resumo_kpis(conn, convenio_id=None, status=None, motivo=None, de=None, ate=None):
     """Totais + taxas para os KPI cards. Valores float."""
-    linhas = guias_filtradas(conn, convenio_id=convenio_id, de=de, ate=ate)
+    linhas = guias_filtradas(conn, convenio_id=convenio_id, status=status,
+                             motivo=motivo, de=de, ate=ate)
     processado = sum(g["vl_processado"] for g in linhas)
     liberado = sum(g["vl_liberado"] for g in linhas)
     glosado = sum(g["vl_glosa"] for g in linhas)
@@ -403,20 +407,53 @@ def agrupado_por_convenio(conn, de=None, ate=None):
     return df
 
 
-def evolucao_mensal(conn, convenio_id=None, de=None, ate=None):
+def evolucao_mensal(conn, convenio_id=None, status=None, motivo=None, de=None, ate=None):
     """DataFrame mensal (mes, glosado, recuperado) por mês de data_inicio."""
-    sql = ("SELECT substr(g.data_inicio, 1, 7) AS mes, SUM(g.vl_glosa) AS glosado, "
-           "SUM(g.vl_recuperado) AS recuperado "
-           "FROM guias g WHERE g.data_inicio != ''")
-    params = []
-    if convenio_id:
-        sql += " AND g.convenio_id = ?"; params.append(convenio_id)
-    if de:
-        sql += " AND g.data_inicio >= ?"; params.append(de)
-    if ate:
-        sql += " AND g.data_inicio <= ?"; params.append(ate)
-    sql += " GROUP BY mes ORDER BY mes"
-    return pd.read_sql_query(sql, conn, params=params)
+    linhas = guias_filtradas(conn, convenio_id=convenio_id, status=status,
+                             motivo=motivo, de=de, ate=ate)
+    df = pd.DataFrame([
+        {"mes": l["data_inicio"][:7], "glosado": l["vl_glosa"],
+         "recuperado": l["vl_recuperado"]}
+        for l in linhas if l["data_inicio"]])
+    if df.empty:
+        return df
+    return (df.groupby("mes", as_index=False)[["glosado", "recuperado"]].sum()
+            .sort_values("mes").reset_index(drop=True))
+
+
+def resumo_por_convenio_status(conn, convenio_id=None, motivo=None, de=None, ate=None):
+    """DataFrame long (convenio, status, total) — soma da glosa por convênio ×
+    status do recurso. Sem filtro de status: o gráfico empilhado não faz sentido
+    com uma única categoria selecionada."""
+    linhas = guias_filtradas(conn, convenio_id=convenio_id, motivo=motivo, de=de, ate=ate)
+    df = pd.DataFrame([
+        {"convenio": l["convenio"], "status": l["status_recurso"],
+         "total": l["vl_glosa"]} for l in linhas])
+    if df.empty:
+        return df
+    return (df.groupby(["convenio", "status"], as_index=False)["total"].sum()
+            .sort_values(["convenio", "status"]).reset_index(drop=True))
+
+
+def resumo_por_status(conn, convenio_id=None, motivo=None, de=None, ate=None):
+    """DataFrame (status, total) — soma da glosa por status do recurso, na ordem
+    canônica de STATUS (para a rosca de distribuição)."""
+    linhas = guias_filtradas(conn, convenio_id=convenio_id, motivo=motivo, de=de, ate=ate)
+    df = pd.DataFrame([
+        {"status": l["status_recurso"], "total": l["vl_glosa"]} for l in linhas])
+    if df.empty:
+        return df
+    df = df.groupby("status", as_index=False)["total"].sum()
+    ordem = {s: i for i, s in enumerate(STATUS)}
+    return df.sort_values("status", key=lambda s: s.map(ordem)).reset_index(drop=True)
+
+
+def listar_motivos(conn):
+    """Motivos distintos das guias (texto de motivo_glosado), em ordem alfabética."""
+    motivos = {motivo_glosado(conn, g["id"])
+               for g in conn.execute("SELECT id FROM guias").fetchall()}
+    motivos.discard("")
+    return sorted(motivos)
 
 
 def ranking_motivos(conn, convenio_id=None, de=None, ate=None):

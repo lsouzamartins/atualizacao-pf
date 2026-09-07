@@ -151,6 +151,24 @@ CSS = """
         flex-shrink: 0;
     }
 
+    /* Cartões de KPI do dashboard de glosas (visual v1.0) */
+    .kpi-card { background: #FFFFFF; border: 1px solid var(--border); border-radius: 16px;
+                padding: 1.1rem 1.2rem; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04); }
+    .kpi-card .kpi-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .kpi-card .kpi-label { font-size: 0.78rem; color: var(--text-muted); font-weight: 500; }
+    .kpi-card .kpi-value { font-size: 1.65rem; font-weight: 700; letter-spacing: -0.5px; margin-top: 0.2rem; }
+    .kpi-card svg { margin-right: 0 !important; opacity: 0.9; }
+
+    /* Tabela de alertas de prazo (visual v1.0) */
+    .tabela-alertas { width: 100%; border-collapse: collapse; font-size: 0.85rem;
+                      background: #FFFFFF; border: 1px solid var(--border); border-radius: 16px; }
+    .tabela-alertas th { text-align: left; color: var(--text-muted); background: var(--surface);
+                         border-bottom: 1px solid var(--border); padding: 0.55rem 0.75rem;
+                         font-weight: 600; }
+    .tabela-alertas td { padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--surface); }
+    .badge-crit { display: inline-block; padding: 2px 10px; border-radius: 999px;
+                  font-size: 0.72rem; font-weight: 600; white-space: nowrap; }
+
     /* Chrome do Streamlit: preserva as abas de navegação (dentro do stToolbar)
        e oculta logo, ações/deploy e decoração */
     #MainMenu {visibility: hidden;} footer {visibility: hidden;}
@@ -282,6 +300,12 @@ _LUCIDE = {
     'bell-ring':          '<path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M22 8c0-2.3-.8-4.3-2-6"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/><path d="M4 2C2.8 3.7 2 5.7 2 8"/>',
     'trending-up':        '<polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>',
     'list':               '<path d="M3 12h.01"/><path d="M3 18h.01"/><path d="M3 6h.01"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M8 6h13"/>',
+    # Ícones do dashboard de glosas no visual v1.0 (KPI cards e exportação)
+    'triangle-alert':     '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+    'percent':            '<line x1="19" x2="5" y1="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>',
+    'clock':              '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+    'circle-minus':       '<circle cx="12" cy="12" r="10"/><path d="M8 12h8"/>',
+    'file-down':          '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M12 18v-6"/><path d="m9 15 3 3 3-3"/>',
 }
 
 

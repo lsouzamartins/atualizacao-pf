@@ -28,6 +28,7 @@ def test_icones_das_paginas_cr_existem_no_lucide():
     from ui_comum import _LUCIDE
     for nome in ("home", "play-circle", "hand-coins", "layout-dashboard", "upload",
                  "history", "chart-column", "alarm-clock", "bell-ring", "trending-up",
-                 "list"):
+                 "list", "triangle-alert", "percent", "clock", "circle-minus",
+                 "file-down"):
         assert nome in _LUCIDE
         assert ui_comum.icone(nome) != ""

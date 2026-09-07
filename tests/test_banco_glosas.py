@@ -227,3 +227,91 @@ def test_diff_guias_editadas_celulas_limpas_nao_quebram():
     assert banco_glosas.diff_guias_editadas(antes, depois2) == [
         {"guia_id": 1, "status": "Glosa Recebida",
          "vl_recuperado": None, "observacao": None}]
+
+
+# ==============================================================================
+# CONSULTAS DO DASHBOARD (visual v1.0 — filtros por status/motivo e resumos)
+# ==============================================================================
+def _item(descricao, glosa, cod="99"):
+    return {"data_realizacao": "2026-05-18", "tabela": "22", "cod_procedimento": "1",
+            "descricao": descricao, "grau_participacao": "", "quantidade": 1,
+            "vl_informado": 10.0, "vl_processado": 10.0, "vl_liberado": 10.0 - glosa,
+            "vl_glosa": glosa, "cod_glosa": cod}
+
+
+def _importar_duas(conn, tmp_path, glosa_a=1.0, glosa_b=1.0, itens_a=None, itens_b=None):
+    """Importa duas guias em convênios A e B e devolve o caminho do arquivo."""
+    arquivo = tmp_path / "dacm.xls"
+    arquivo.write_bytes(b"x")
+    banco_glosas.importar_dacm(
+        conn, _parsed([_guia("1", glosa=glosa_a, itens=itens_a)]), "Conv A",
+        "lsmartins", str(arquivo))
+    banco_glosas.importar_dacm(
+        conn, _parsed([_guia("2", glosa=glosa_b, itens=itens_b)]), "Conv B",
+        "lsmartins", str(arquivo))
+    return arquivo
+
+
+def test_guias_filtradas_por_motivo(conn, tmp_path):
+    _importar_duas(conn, tmp_path,
+                   itens_a=[_item("MATERIAL X", 1.0)],
+                   itens_b=[_item("MATERIAL Y", 1.0)])
+    so_x = banco_glosas.guias_filtradas(conn, motivo="MATERIAL X [99]")
+    assert [g["guia_prestador"] for g in so_x] == ["1"]
+
+
+def test_listar_motivos_distintos_em_ordem(conn, tmp_path):
+    _importar_duas(conn, tmp_path,
+                   itens_a=[_item("BETA", 1.0)],
+                   itens_b=[_item("ALFA", 1.0)])
+    assert banco_glosas.listar_motivos(conn) == ["ALFA [99]", "BETA [99]"]
+
+
+def test_resumo_por_status_soma_glosa_por_status_na_ordem_canonica(conn, tmp_path):
+    _importar_duas(conn, tmp_path, glosa_a=10.0, glosa_b=0.0)
+    guia_b = [g for g in banco_glosas.guias_filtradas(conn)
+              if g["guia_prestador"] == "2"][0]
+    banco_glosas.registrar_status(conn, guia_b["guia_id"], "Recurso Negado")
+    df = banco_glosas.resumo_por_status(conn)
+    assert df["status"].tolist() == ["A iniciar recurso", "Recurso Negado"]
+    assert dict(zip(df["status"], df["total"])) == {
+        "A iniciar recurso": 10.0, "Recurso Negado": 0.0}
+
+
+def test_resumo_por_convenio_status_linhas_por_convenio_e_status(conn, tmp_path):
+    _importar_duas(conn, tmp_path, glosa_a=10.0, glosa_b=5.0)
+    df = banco_glosas.resumo_por_convenio_status(conn)
+    linhas = {(r["convenio"], r["status"]): r["total"] for r in df.to_dict("records")}
+    assert linhas[("Conv A", "A iniciar recurso")] == 10.0
+    assert linhas[("Conv B", "A iniciar recurso")] == 5.0
+
+
+def test_resumo_por_convenio_status_dataframe_vazio_sem_guias(conn):
+    """Sem guias, devolve DataFrame vazio (não quebra no groupby)."""
+    assert banco_glosas.resumo_por_convenio_status(conn).empty
+
+
+def test_resumo_por_status_dataframe_vazio_sem_guias(conn):
+    """Sem guias, devolve DataFrame vazio (não quebra no groupby)."""
+    assert banco_glosas.resumo_por_status(conn).empty
+
+
+def test_resumo_kpis_filtra_por_status_e_motivo(conn, tmp_path):
+    _importar_duas(conn, tmp_path, glosa_a=10.0, glosa_b=4.0,
+                   itens_a=[_item("ALFA", 10.0)], itens_b=[_item("BETA", 4.0)])
+    assert banco_glosas.resumo_kpis(conn, motivo="ALFA [99]")["glosado"] == 10.0
+    assert banco_glosas.resumo_kpis(conn, status="A iniciar recurso")["glosado"] == 14.0
+    guia_b = [g for g in banco_glosas.guias_filtradas(conn)
+              if g["guia_prestador"] == "2"][0]
+    banco_glosas.registrar_status(conn, guia_b["guia_id"], "Recurso Negado")
+    assert banco_glosas.resumo_kpis(conn, status="A iniciar recurso")["glosado"] == 10.0
+
+
+def test_evolucao_mensal_filtra_por_status(conn, tmp_path):
+    _importar_duas(conn, tmp_path, glosa_a=10.0, glosa_b=5.0)
+    guia_b = [g for g in banco_glosas.guias_filtradas(conn)
+              if g["guia_prestador"] == "2"][0]
+    banco_glosas.registrar_status(conn, guia_b["guia_id"], "Recurso Negado")
+    df = banco_glosas.evolucao_mensal(conn, status="A iniciar recurso")
+    assert float(df["glosado"].sum()) == 10.0
+    assert float(df["recuperado"].sum()) == 0.0
