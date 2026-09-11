@@ -263,6 +263,11 @@ def _converter_linha_wpd(linha) -> dict:
             except (ValueError, TypeError):
                 dados[col] = str(v).strip()
         else:
+            # a BD1 guarda os percentuais na convenção ×100 (0–100); o WPD-26
+            # traz a fração (0–1) — converte aqui, no funil único de linhas
+            # novas, upsert e records do cache.
+            if col in ("% Glosa", "% Pré-glosa") and isinstance(v, (int, float)):
+                v = v * 100
             dados[col] = v
     return dados
 

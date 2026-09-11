@@ -107,6 +107,40 @@ def _wpd_com_baixas():
 
 
 # ==============================================================================
+# Conversão WPD → BD1 (convenções de coluna)
+#
+# A BD1 armazena % Glosa e % Pré-glosa na convenção ×100 (0–100, ex.: 69.62),
+# mas o WPD-26 traz a fração (0–1, ex.: 0.6962). O conversor é o funil único
+# de linhas novas, upsert e records do cache — a correção acontece aqui.
+# ==============================================================================
+def test_converter_linha_wpd_multiplica_glosa_e_pre_glosa_por_cem():
+    linha = _wpd_com_baixas().iloc[0].copy()
+    linha["% Glosa"] = 0.6962196279046956
+    linha["% Pré-glosa"] = 0.1234
+    dados = ie._converter_linha_wpd(linha)
+    assert dados["% Glosa"] == pytest.approx(69.62196279046956)
+    assert dados["% Pré-glosa"] == pytest.approx(12.34)
+
+
+def test_converter_linha_wpd_glosa_nula_e_zero_ficam_como_estao():
+    linha = _wpd_com_baixas().iloc[0].copy()
+    linha["% Glosa"] = None
+    linha["% Pré-glosa"] = 0.0
+    dados = ie._converter_linha_wpd(linha)
+    assert dados["% Glosa"] is None
+    assert dados["% Pré-glosa"] == 0.0
+
+
+def test_converter_linha_wpd_so_escala_os_percentuais():
+    linha = _wpd_com_baixas().iloc[0].copy()
+    linha["% Glosa"] = 0.6962196279046956
+    dados = ie._converter_linha_wpd(linha)
+    assert dados["Faturado"] == 6997.92       # valores absolutos intocados
+    assert dados["Valor Glosa"] == 0.0
+    assert dados["Atraso"] == 0.0
+
+
+# ==============================================================================
 # Upsert na planilha (sheet5.xml)
 # ==============================================================================
 def test_upsert_bd1_preenche_baixa_vazia_e_atualiza_pago():
