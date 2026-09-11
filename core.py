@@ -247,6 +247,29 @@ def gerar_resumo(df_ni_final, df_wpd_filtrado, xlsx_wpd_limpo, xlsx_nao_identifi
 # ==============================================================================
 # PROCESSAMENTO — FASE 0: WPD-26
 # ==============================================================================
+def _filtrar_linhas_lixo(df_wpd: pd.DataFrame) -> pd.DataFrame:
+    """Remove linhas de cabeçalho/totalizadores do WPD (convênio OU remessa
+    com termo-lixo). "0"/"0.0" valem apenas como valor EXATO da célula — como
+    substring, o "0" descartaria toda remessa contendo o dígito (regressão de
+    09/09/2026: 138055 e todas as 150xxx eram perdidas aqui)."""
+    termos_lixo = [
+        "PARÂMETROS", "PERÍODO DE ENTREGA", "APENAS DA UNIDADE", "REMESSAS:",
+        "TODOS OS CONVÊNIOS", "TODAS REMESSA", "TOTALIZA OS PAGAMENTOS", "TOTAL", "GERAL",
+        "ABERTO:", "CONVÊNIO:", "L.MARTINS", "REMESSA", "(VAZIAS)", "NAN",
+        "SOC. BENEFICENTE", "ISRAELITA", "BENEFICENTE"
+    ]
+    padrao_lixo = '|'.join(re.escape(t) for t in termos_lixo)
+    padrao_zero = r'^(?:0|0\.0)$'
+    return df_wpd[
+        (~df_wpd["Convênio"].str.upper().str.contains(padrao_lixo, na=False)) &
+        (~df_wpd["Remessa"].str.upper().str.contains(padrao_lixo, na=False)) &
+        (~df_wpd["Convênio"].str.upper().str.contains(padrao_zero, na=False)) &
+        (~df_wpd["Remessa"].str.upper().str.contains(padrao_zero, na=False)) &
+        (df_wpd["Convênio"] != "") & (df_wpd["Convênio"] != "nan") &
+        (df_wpd["Remessa"] != "") & (df_wpd["Remessa"] != "nan")
+    ].copy()
+
+
 def processar_fase_0_wpd(xls_wpd: str, xlsx_wpd_limpo: str):
     """
     Processa WPD-26: extrai, limpa e salva.
@@ -273,19 +296,7 @@ def processar_fase_0_wpd(xls_wpd: str, xlsx_wpd_limpo: str):
     df_wpd["Convênio"] = df_wpd["Convênio"].astype(str).str.strip()
     df_wpd["Remessa"] = df_wpd["Remessa"].astype(str).str.strip()
 
-    termos_lixo = [
-        "PARÂMETROS", "PERÍODO DE ENTREGA", "APENAS DA UNIDADE", "REMESSAS:",
-        "TODOS OS CONVÊNIOS", "TODAS REMESSA", "TOTALIZA OS PAGAMENTOS", "TOTAL", "GERAL",
-        "ABERTO:", "CONVÊNIO:", "L.MARTINS", "REMESSA", "(VAZIAS)", "NAN", "0.0", "0",
-        "SOC. BENEFICENTE", "ISRAELITA", "BENEFICENTE"
-    ]
-    padrao_lixo = '|'.join(re.escape(t) for t in termos_lixo)
-    df_wpd_filtrado = df_wpd[
-        (~df_wpd["Convênio"].str.upper().str.contains(padrao_lixo, na=False)) &
-        (~df_wpd["Remessa"].str.upper().str.contains(padrao_lixo, na=False)) &
-        (df_wpd["Convênio"] != "") & (df_wpd["Convênio"] != "nan") &
-        (df_wpd["Remessa"] != "") & (df_wpd["Remessa"] != "nan")
-    ].copy()
+    df_wpd_filtrado = _filtrar_linhas_lixo(df_wpd)
 
     colunas_datas = ["Emissão", "Vencimento", "Entrega"]
     for col in colunas_datas:

@@ -8,11 +8,9 @@ gravava no fluxo do pendrive (arquivo de referência de 03/09/2026):
 - itens novos entram APENAS como acréscimo no fim dos sharedItems — a mesma
   convenção do Excel observada no arquivo real (ordem de primeira aparição,
   sem reordenar nem remover itens antigos);
-- a timeline "Entrega" recebe a janela do mês de fechamento (mês anterior ao
-  da geração — o arquivo de referência de 03/09/2026 usa agosto/2026 mesmo
-  contendo entregas de 01–03/09);
-- o slicer "Tipo de remessa" da aba Data Entrega fica só em "Comum" e o campo
-  21 da pivô esconde "Recurso"/vazio (h="1"), como no arquivo de referência;
+- timeline "Entrega" e slicers do arquivo do usuário são PRESERVADOS byte a
+  byte (sem filtros forçados — filtros do mês de fechamento ou "só Comum"
+  escondiam baixas e recursos no relatório);
 - refreshOnLoad é REMOVIDO das pivôs e dos caches (as pivôs renderizam dos
   caches, de forma determinística, sem recalcular ao abrir).
 
@@ -24,7 +22,7 @@ task-4-investigacao.md + inspeções de 03–04/09/2026.
 =============================================================================="""
 import posixpath
 import re
-from datetime import date, datetime
+from datetime import datetime
 from xml.sax.saxutils import escape, unescape
 
 # ------------------------------------------------------------------------------
@@ -33,7 +31,6 @@ from xml.sax.saxutils import escape, unescape
 RE_DEF_CACHE = re.compile(r"xl/pivotCache/pivotCacheDefinition\d+\.xml$")
 RE_RELS_DEF = re.compile(r"xl/pivotCache/_rels/pivotCacheDefinition\d+\.xml\.rels$")
 RE_RECORDS = re.compile(r"xl/pivotCache/pivotCacheRecords\d+\.xml$")
-RE_TIMELINE = re.compile(r"xl/timelineCaches/timelineCache\d+\.xml$")
 RE_SLICER = re.compile(r"xl/slicerCaches/slicerCache\d+\.xml$")
 
 # cacheField com corpo (pode ter sharedItems) OU auto-contido (<cacheField .../>)
@@ -51,12 +48,9 @@ _RE_R = re.compile(r"<r>.*?</r>", re.S)
 # base) ou <m/> (vazio)
 _RE_ENTRADA_NM = re.compile(r'<n v="([^"]*)"/>|<s v="([^"]*)"/>|<m/>')
 _RE_PIVOT_FIELD = re.compile(r"<pivotField\b[^>]*?/>|<pivotField\b.*?</pivotField>", re.S)
-_RE_STATE = re.compile(r"<state\b.*?</state>", re.S)
-_RE_STATE_V = re.compile(r"<state\b[^>]*/>")
 _RE_ITEMS_SLICER = re.compile(r"(<items\b[^>]*>)(.*?)(</items>)", re.S)
 _RE_ITEMS_PIVOT = re.compile(r"(<items\b[^>]*>)(.*?)(</items>)", re.S)
 
-ISO_SUFIXO = "T00:00:00"
 NOME_USUARIO = "Leonardo Martins"
 
 # atributos de sharedItems recalculados a cada acréscimo
@@ -75,10 +69,6 @@ def _numero(valor):
     if isinstance(valor, int):
         return str(valor)
     return repr(float(valor))
-
-
-def _iso(data: date) -> str:
-    return f"{data.isoformat()}{ISO_SUFIXO}"
 
 
 def _escape_attr(texto: str) -> str:
@@ -126,6 +116,19 @@ class CachePivot:
         se ainda não existe. tipo ∈ {'n', 's', 'd', 'm'} (m → valor None)."""
         return self._campos[campo].obter(tipo, valor)
 
+    def indice_existente(self, campo: str, tipo: str, valor) -> int | None:
+        """Índice do item no sharedItems do campo SEM acrescentar (None se
+        não existe). Usado para LOCALIZAR um record já gravado."""
+        for i, (t, v) in enumerate(self._campos[campo].itens):
+            if t == tipo and v == valor:
+                return i
+        return None
+
+    def indices_por_valor(self, campo: str) -> dict[tuple[str, str | None], int]:
+        """{(tipo, valor): índice} de todos os itens do campo — para N buscas
+        em uma passada (indice_existente repetido seria O(n²))."""
+        return {(t, v): i for i, (t, v) in enumerate(self._campos[campo].itens)}
+
     def novos_indices(self, campo: str) -> list[int]:
         """Índices dos itens ACRESCENTADOS ao campo (para a pivô e slicers)."""
         return list(self._campos[campo]._novos_indices)
@@ -170,6 +173,45 @@ class CachePivot:
         idx = self._reg.rindex("</pivotCacheRecords>")
         self._reg = self._reg[:idx] + "".join(blocos) + self._reg[idx:]
         self._n_registros += len(blocos)
+
+    def blocos(self) -> list[str]:
+        """Os records <r> em ordem, para leitura."""
+        idx_fim = self._reg.rindex("</pivotCacheRecords>")
+        cabeca = self._reg[:idx_fim]
+        primeiro = cabeca.index("<r>")
+        return _RE_R.findall(cabeca[primeiro:])
+
+    def substituir_record(self, indice: int, novo: str) -> None:
+        """Substitui o record da posição `indice` por `novo` (o nº de records
+        não muda)."""
+        idx_fim = self._reg.rindex("</pivotCacheRecords>")
+        cabeca = self._reg[:idx_fim]
+        primeiro = cabeca.index("<r>")
+        prefixo = cabeca[:primeiro]
+        blocos = _RE_R.findall(cabeca[primeiro:])
+        if not (0 <= indice < len(blocos)):
+            raise RuntimeError(
+                f"substituir_record: índice {indice} fora de [0, {len(blocos)})")
+        self._reg = (prefixo + "".join(novo if i == indice else b
+                                       for i, b in enumerate(blocos))
+                     + self._reg[idx_fim:])
+
+    def substituir_records(self, mapa: dict[int, str]) -> None:
+        """Substitui vários records ({índice: novo}) numa única reescrita —
+        chamadas repetidas de substituir_record seriam O(n²)."""
+        if not mapa:
+            return
+        idx_fim = self._reg.rindex("</pivotCacheRecords>")
+        cabeca = self._reg[:idx_fim]
+        primeiro = cabeca.index("<r>")
+        prefixo = cabeca[:primeiro]
+        blocos = _RE_R.findall(cabeca[primeiro:])
+        for i, novo in mapa.items():
+            if not (0 <= i < len(blocos)):
+                raise RuntimeError(
+                    f"substituir_records: índice {i} fora de [0, {len(blocos)})")
+            blocos[i] = novo
+        self._reg = prefixo + "".join(blocos) + self._reg[idx_fim:]
 
     def remover_registros_finais(self, n: int) -> None:
         """Remove os N últimos registros (bloco obsoleto da BD2)."""
@@ -342,8 +384,11 @@ def _item_xml(tipo: str, valor) -> str:
 def _recalcular_attrs(attrs: str, itens) -> str:
     """Reescreve count/minValue/maxValue/minDate/maxDate/contains* com base
     na lista final; os demais atributos (containsSemiMixedTypes, containsNonDate…)
-    permanecem como estavam."""
+    permanecem como estavam. Os contains*="0" originais são preservados quando o
+    tipo continua ausente — o Excel não abre o arquivo sem eles (ex.:
+    containsString="0" nos campos de data; causa do reparo de 09/09)."""
     tipos = {t for t, _ in itens}
+    originais = dict(re.findall(r'(\w+)="([^"]*)"', attrs))
     novos_attr = {"count": str(len(itens))}
     numeros = [float(v) for t, v in itens if t == "n"]
     if numeros:
@@ -357,13 +402,14 @@ def _recalcular_attrs(attrs: str, itens) -> str:
     if datas:
         novos_attr["minDate"] = min(datas)
         novos_attr["maxDate"] = max(datas)
-    if "s" in tipos:
-        novos_attr["containsString"] = "1"
-    if "d" in tipos:
-        novos_attr["containsDate"] = "1"
-    if "m" in tipos:
-        novos_attr["containsBlank"] = "1"
-    if len(tipos) > 1:
+    for tipo, chave in (("s", "containsString"), ("n", "containsNumber"),
+                        ("d", "containsDate"), ("m", "containsBlank")):
+        if tipo in tipos:
+            novos_attr[chave] = "1"
+        elif originais.get(chave) == "0":
+            novos_attr[chave] = "0"  # preserva o "0" explícito do Excel
+    tipos_valor = {t for t in tipos if t in ("s", "n", "d")}
+    if len(tipos_valor) > 1:
         novos_attr["containsMixedTypes"] = "1"
     restantes = _RE_ATTRS_RECALC.sub("", attrs)
     return restantes + "".join(f' {k}="{v}"' for k, v in novos_attr.items())
@@ -396,30 +442,25 @@ def _anexar_itens(xml: str, indice: int, novos: list[int], com_sd: bool) -> str:
                           it.group(1), count=1)
         extras = "".join(f'<item x="{x}" sd="0"/>' if com_sd else f'<item x="{x}"/>'
                          for x in novos)
-        return (cm[:it.start()] + abertura + it.group(2) + extras + it.group(3)
+        corpo = it.group(2)
+        dm = re.search(r'<item t="default"[^>]*/>\s*$', corpo)
+        if dm:
+            # O Excel exige <item t="default".../> como ÚLTIMO item do <items>;
+            # os novos itens entram ANTES dele.
+            corpo = corpo[:dm.start()] + extras + dm.group(0)
+        else:
+            corpo += extras
+        return (cm[:it.start()] + abertura + corpo + it.group(3)
                 + cm[it.end():])
     return xml[:m.start()] + _editar(bloco) + xml[m.end():]
 
 
 def anexar_itens_pivot(xml: str, indice: int, novos: list[int],
                        com_sd: bool = False) -> str:
-    """Acrescenta <item x="N"/> (ou sd="0") ao fim do <items> do campo."""
+    """Acrescenta <item x="N"/> (ou sd="0") ao <items> do campo, antes do
+    <item t="default".../> final quando houver (o Excel exige que o default
+    seja o último item)."""
     return _anexar_itens(xml, indice, novos, com_sd)
-
-
-def esconder_itens_pivot(xml: str, indice: int, indices: list[int]) -> str:
-    """Marca h="1" nos <item x="N"/> indicados (sem duplicar o atributo)."""
-    m = _campo_da_pivot(xml, indice)
-    bloco = m.group(0)
-    for x in indices:
-        def _ocultar(mm):
-            item = mm.group(0)
-            if re.search(r'\bh="1"', item):
-                return item
-            return re.sub(r"/>$", ' h="1"/>', item, count=1)
-        bloco, _ = re.subn(rf'<item\b(?=[^>]*\bx="{x}")[^>]*/>', _ocultar,
-                           bloco, count=1)
-    return xml[:m.start()] + bloco + xml[m.end():]
 
 
 def colapsar_itens_pivot(xml: str, indice: int) -> str:
@@ -440,58 +481,6 @@ def colapsar_itens_pivot(xml: str, indice: int) -> str:
 def remover_refresh_on_load(xml: str) -> str:
     """Remove refreshOnLoad="1" da raiz (não recalcular pivô ao abrir)."""
     return re.sub(r'\s+refreshOnLoad="\d"', "", xml, count=1)
-
-
-# ==============================================================================
-# Timeline "Entrega" — janela do mês de fechamento
-# ==============================================================================
-def editar_timeline(xml: str, inicio: date, fim: date) -> str:
-    """Fixa filterType="dateBetween" com a seleção [inicio, fim] no <state>.
-    Aceita <state> com filhos (bounds) ou auto-contido (<state .../>)."""
-    sel = (f'<selection startDate="{_iso(inicio)}" endDate="{_iso(fim)}"/>')
-
-    def _montar(abertura: str, resto: str) -> str:
-        ab = abertura[:-2] if abertura.endswith("/>") else abertura[:-1]
-        ab = re.sub(r'\s+filterType="[^"]*"', "", ab)
-        ab += ' filterType="dateBetween">'
-        corpo = re.sub(r"<selection\b[^>]*/>", "", resto)
-        return ab + sel + corpo + "</state>"
-
-    def _editar(m):
-        bloco = m.group(0)
-        fim_abertura = bloco.index(">") + 1
-        abertura, resto = bloco[:fim_abertura], bloco[fim_abertura:]
-        resto = resto.replace("</state>", "", 1) if "</state>" in resto else resto
-        return _montar(abertura, resto)
-
-    novo, n = re.subn(_RE_STATE, _editar, xml, count=1)
-    if n == 0:
-        novo, n = re.subn(_RE_STATE_V, lambda m: _montar(m.group(0), ""),
-                          xml, count=1)
-    if n == 0:
-        raise RuntimeError("elemento <state> não encontrado na timeline")
-    return novo
-
-
-# ==============================================================================
-# Slicer "Tipo de remessa" (Data Entrega) — só "Comum"
-# ==============================================================================
-def selecionar_slicer_tipo_remessa(xml: str) -> str:
-    """Deixa só o item x=0 (Comum) com s="1"; mantém nd e demais atributos."""
-    def _editar(m):
-        novos = []
-        for pos, item in enumerate(re.findall(r"<i\b[^>]*/>", m.group(2))):
-            xm = re.search(r'\bx="(\d+)"', item)
-            x = xm.group(1) if xm else str(pos)  # fallback: posição natural
-            resto = re.sub(r'\s+x="\d+"', "", item[len("<i"):-2])
-            resto = re.sub(r'\s+s="1"', "", resto)
-            s = ' s="1"' if x == "0" else ""
-            novos.append(f'<i x="{x}"{resto}{s}/>')
-        return m.group(1) + "".join(novos) + m.group(3)
-    novo, n = re.subn(_RE_ITEMS_SLICER, _editar, xml, count=1)
-    if n == 0:
-        raise RuntimeError("bloco <items> não encontrado no slicer")
-    return novo
 
 
 def anexar_itens_slicer(xml: str, novos: list[int]) -> str:
@@ -542,25 +531,6 @@ def parte_cache_bd2(partes: dict) -> str:
                 r'<worksheetSource[^>]*\bref="A1:I\d+"', partes[nome]):
             return nome
     raise RuntimeError("cache da BD2 (worksheetSource ref A1:I) não encontrado")
-
-
-def parte_timeline_entrega(partes: dict) -> str:
-    for nome in sorted(partes):
-        if RE_TIMELINE.match(nome) and 'sourceName="Entrega"' in partes[nome]:
-            return nome
-    raise RuntimeError('timeline "Entrega" não encontrada')
-
-
-def parte_slicer_tipo_data_entrega(partes: dict) -> str:
-    """Slicer 'Tipo de remessa' ligado à pivô da aba Data Entrega (tabId=3)."""
-    for nome in sorted(partes):
-        if not RE_SLICER.match(nome):
-            continue
-        texto = partes[nome]
-        if ('sourceName="Tipo de remessa"' in texto
-                and '<pivotTable tabId="3"' in texto):
-            return nome
-    raise RuntimeError('slicer "Tipo de remessa" da Data Entrega não encontrado')
 
 
 def partes_slicer_convenio(partes: dict, tab_ids) -> list[str]:

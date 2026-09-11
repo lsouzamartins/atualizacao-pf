@@ -1,7 +1,6 @@
-"""Testes unitários do editor cirúrgico de caches/timeline/slicers/pivôs
+"""Testes unitários do editor cirúrgico de caches/slicers/pivôs
 (pivot_cache.py)."""
 import re
-from datetime import date
 
 import pytest
 
@@ -225,6 +224,38 @@ def test_para_xml_recalcula_min_max_numerico():
     assert 'count="2"' in definicao and 'containsInteger="1"' in definicao
 
 
+def test_para_xml_preserva_contains_string_zero_em_campo_de_data():
+    """O Excel grava containsString="0" nos campos de data (Vencimento,
+    Entrega, Baixa) e NÃO abre o arquivo sem o atributo — causa raiz do
+    aviso de reparo de 09/09. O recálculo não pode removê-lo."""
+    campos = ['<cacheField name="Vencimento" numFmtId="14"><sharedItems '
+              'containsSemiMixedTypes="0" containsNonDate="0" containsDate="1" '
+              'containsString="0" minDate="2024-01-16T00:00:00" '
+              'maxDate="2065-02-16T00:00:00" count="2">'
+              '<d v="2024-01-16T00:00:00"/><d v="2065-02-15T00:00:00"/>'
+              '</sharedItems></cacheField>']
+    cache = pc.CachePivot(_def(campos), _records(['<x v="0"/>']))
+    cache.obter_indice("Vencimento", "d", "2026-10-29T00:00:00")
+    definicao, _ = cache.para_xml()
+    assert 'containsString="0"' in definicao
+
+
+def test_para_xml_nao_marca_misto_por_causa_de_blank():
+    """O <m/> é blank (containsBlank), não um tipo de valor — um campo só de
+    datas com blank não pode ganhar containsMixedTypes="1" (o Excel original
+    não grava o atributo nesse caso)."""
+    campos = ['<cacheField name="Baixa" numFmtId="0"><sharedItems '
+              'containsNonDate="0" containsDate="1" containsString="0" '
+              'containsBlank="1" count="2">'
+              '<d v="2026-07-17T00:00:00"/><m/></sharedItems></cacheField>']
+    cache = pc.CachePivot(_def(campos), _records(['<x v="0"/>']))
+    cache.obter_indice("Baixa", "d", "2026-09-02T00:00:00")
+    definicao, _ = cache.para_xml()
+    assert 'containsMixedTypes="1"' not in definicao
+    assert 'containsBlank="1"' in definicao
+    assert 'containsString="0"' in definicao
+
+
 def test_substituir_strings_no_lugar_indices_estaveis():
     campos = ['<cacheField name="Convênio" numFmtId="0"><sharedItems count="1">'
               '<s v="Convênio Z "/></sharedItems></cacheField>']
@@ -254,42 +285,6 @@ def test_substituir_strings_preserva_unicidade_contra_item_nao_usado():
 
 
 # ==============================================================================
-# Timeline "Entrega"
-# ==============================================================================
-def _timeline(estado):
-    return (DECL
-            + '<timelineCache xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" '
-            + 'sourceName="Entrega" name="TimelineEntrega1">'
-            + estado + '</timelineCache>')
-
-
-def test_editar_timeline_com_bounds():
-    estado = ('<state filterType="unknown" startDate="2024-01-01T00:00:00" '
-              'endDate="2027-01-01T00:00:00">'
-              '<bounds startDate="2024-01-01T00:00:00" endDate="2027-01-01T00:00:00"/>'
-              '</state>')
-    saida = pc.editar_timeline(_timeline(estado), date(2026, 8, 1), date(2026, 8, 31))
-    assert 'filterType="dateBetween"' in saida
-    assert ('<selection startDate="2026-08-01T00:00:00" '
-            'endDate="2026-08-31T00:00:00"/>') in saida
-    assert saida.index("<selection") < saida.index("<bounds")
-    assert 'startDate="2024-01-01T00:00:00"' in saida   # atributos preservados
-
-
-def test_editar_timeline_state_autocontido():
-    estado = ('<state filterType="unknown" startDate="2024-01-01T00:00:00" '
-              'endDate="2027-01-01T00:00:00"/>')
-    saida = pc.editar_timeline(_timeline(estado), date(2026, 8, 1), date(2026, 8, 31))
-    assert 'filterType="dateBetween"' in saida
-    assert '<selection ' in saida and saida.rstrip().endswith("</state></timelineCache>")
-
-
-def test_editar_timeline_sem_state_levanta():
-    with pytest.raises(RuntimeError, match="state"):
-        pc.editar_timeline("<timelineCache/>", date(2026, 8, 1), date(2026, 8, 31))
-
-
-# ==============================================================================
 # Slicers
 # ==============================================================================
 SLICER_TIPO = (DECL
@@ -300,13 +295,6 @@ SLICER_TIPO = (DECL
                + '</slicerCache>')
 
 
-def test_selecionar_slicer_tipo_remessa():
-    saida = pc.selecionar_slicer_tipo_remessa(SLICER_TIPO)
-    assert re.findall(r'<i x="(\d+)" s="1"', saida) == ["0"]
-    assert '<i x="2" nd="1"/>' in saida           # nd preservado
-    assert '<i x="1"/>' in saida                  # desselecionado
-
-
 def test_anexar_itens_slicer():
     saida = pc.anexar_itens_slicer(SLICER_TIPO, [3, 4])
     assert 'count="5"' in saida
@@ -315,8 +303,6 @@ def test_anexar_itens_slicer():
 
 
 def test_slicer_sem_items_levanta():
-    with pytest.raises(RuntimeError):
-        pc.selecionar_slicer_tipo_remessa("<slicerCache/>")
     with pytest.raises(RuntimeError):
         pc.anexar_itens_slicer("<slicerCache/>", [1])
 
@@ -343,19 +329,25 @@ def test_anexar_itens_pivot_com_e_sem_sd():
     assert '<item x="1" sd="0"/>' not in sem_sd
 
 
+def test_anexar_itens_pivot_mantem_default_como_ultimo():
+    """O Excel exige <item t="default"/> como ÚLTIMO item do <items>;
+    os novos itens entram ANTES dele (regressão do aviso de reparo)."""
+    saida = pc.anexar_itens_pivot(PIVOT, 2, [3, 4])
+    assert '<items count="6">' in saida
+    assert '<item x="3"/><item x="4"/><item t="default"/>' in saida
+    assert '<item x="0"/><item x="1"/><item m="1" x="2"/>' in saida  # intactos
+
+
+def test_anexar_itens_pivot_default_com_sd_continua_ultimo():
+    piv_sd = PIVOT.replace('<item t="default"/>', '<item t="default" sd="0"/>')
+    saida = pc.anexar_itens_pivot(piv_sd, 2, [7], com_sd=True)
+    assert '<items count="5">' in saida
+    assert '<item x="7" sd="0"/><item t="default" sd="0"/>' in saida
+
+
 def test_anexar_itens_pivot_sem_items_levanta():
     with pytest.raises(RuntimeError, match="sem <items>"):
         pc.anexar_itens_pivot(PIVOT, 0, [1])
-
-
-def test_esconder_itens_pivot():
-    saida = pc.esconder_itens_pivot(PIVOT, 2, [1, 2])
-    assert '<item x="1" h="1"/>' in saida
-    assert '<item m="1" x="2" h="1"/>' in saida
-    assert '<item x="0"/>' in saida
-    # idempotente — não duplica o atributo
-    de_novo = pc.esconder_itens_pivot(saida, 2, [1, 2])
-    assert de_novo.count('h="1"') == 2
 
 
 def test_colapsar_itens_pivot():
@@ -423,8 +415,6 @@ def test_seletores_de_partes():
     com_subida["xl/pivotCacheRecords2.xml"] = "<records/>"
     assert pc.nome_da_rel(com_subida, "xl/pivotCache/pivotCacheDefinition2.xml") == \
         "xl/pivotCacheRecords2.xml"
-    assert pc.parte_timeline_entrega(partes) == "xl/timelineCaches/timelineCache1.xml"
-    assert pc.parte_slicer_tipo_data_entrega(partes) == "xl/slicerCaches/slicerCache3.xml"
     assert pc.partes_slicer_convenio(partes, [3, 6, 11]) == [
         "xl/slicerCaches/slicerCache1.xml", "xl/slicerCaches/slicerCache5.xml"]
     assert pc.partes_slicer_convenio(partes, [8]) == ["xl/slicerCaches/slicerCache7.xml"]
@@ -436,9 +426,5 @@ def test_seletores_levantam_quando_nao_acham():
         pc.parte_cache_bd1({})
     with pytest.raises(RuntimeError):
         pc.parte_cache_bd2({})
-    with pytest.raises(RuntimeError):
-        pc.parte_timeline_entrega({})
-    with pytest.raises(RuntimeError):
-        pc.parte_slicer_tipo_data_entrega({})
     with pytest.raises(RuntimeError):
         pc.nome_da_rel({}, "xl/pivotCache/pivotCacheDefinition1.xml")

@@ -4,9 +4,10 @@ INTEGRAÇÃO CIRÚRGICA DO EXCEL — ATUALIZAÇÃO PF · NUVEM
 Substitui o motor COM (Windows) e o motor UNO (reprovado no spike — R24):
 edita apenas as partes XML de BD1/BD2 dentro do .xlsx (que é um zip),
 preservando pivôs/slicers/timelines byte a byte, e regenera os caches
-embutidos das pivôs (pivot_cache.py) com os dados finais + os estados de
-timeline/slicer do arquivo de referência — SEM refreshOnLoad (as pivôs
-renderizam dos caches, de forma determinística, como no pendrive).
+embutidos das pivôs (pivot_cache.py) com os dados finais — timeline e
+slicers do arquivo do usuário ficam INTACTOS (sem filtros forçados) e
+SEM refreshOnLoad (as pivôs renderizam dos caches, de forma
+determinística, como no pendrive).
 
 O arquivo Hias NUNCA é salvo pelo openpyxl (isso destruiria pivôs/slicers —
 ver notas-spike-libreoffice.md). O openpyxl aqui só LÊ (gate de validação).
@@ -18,7 +19,6 @@ Contrato público (consumido por integracao_runner.py):
                                xlsx_hias_final, pasta_raiz, pasta_saida,
                                xlsx_wpd_limpo) -> None
 =============================================================================="""
-import calendar
 import numbers
 import os
 import re
@@ -347,6 +347,146 @@ def _editar_bd1(xml_bd1: str, novas: pd.DataFrame, strings) -> tuple[str, int, i
 
 
 # ==============================================================================
+# BD1 — UPSERT de baixa/valores das remessas JÁ existentes (bug 09/09/2026)
+# ==============================================================================
+# A Fase 3a só ANEXA remessas novas — a baixa de uma remessa que já está na
+# base nunca era aplicada. O upsert corrige isso: Baixa (F) e valores (I–Q)
+# das linhas existentes são atualizados quando o WPD traz dado novo.
+_COL_UPSERT = {"Baixa": "F", "Faturado": "I", "Valor Pago": "J", "Valor ISS": "K",
+               "Vlr Guia": "L", "% Pré-glosa": "M", "Valor Glosa": "N", "% Glosa": "O",
+               "Atraso": "P", "Faturas": "Q"}
+_COLS_UPSERT_APOS_BAIXA = ["Faturado", "Valor Pago", "Valor ISS", "Vlr Guia",
+                           "% Pré-glosa", "Valor Glosa", "% Glosa", "Atraso", "Faturas"]
+
+
+def _linhas_bd1(xml_bd1: str, strings) -> dict:
+    """{remessa normalizada: (nº da linha, abertura da <row>, corpo)} — coluna A
+    numérica ou string compartilhada (mesma leitura de _remessas_bd1)."""
+    linhas = {}
+    for m in re.finditer(r'<row r="(\d+)"([^>]*)>(.*?)</row>', xml_bd1, flags=re.DOTALL):
+        num = int(m.group(1))
+        corpo = m.group(3)
+        ca = re.search(r'<c r="A\d+"([^>]*)>(?:<v>(.*?)</v>)?</c>', corpo)
+        if ca is None or ca.group(2) is None:
+            continue
+        attrs, v = ca.group(1), ca.group(2)
+        if 't="s"' in attrs:
+            try:
+                rem = strings.texto_de_indice(int(v))
+            except (IndexError, ValueError):
+                continue
+        elif 't="str"' in attrs:
+            rem = v
+        else:
+            try:
+                rem = float(v)
+            except ValueError:
+                continue
+        abertura = m.group(0)[:m.group(0).index(">") + 1]
+        linhas[_normalizar_remessa(rem)] = (num, abertura, corpo)
+    return linhas
+
+
+def _valor_celula(corpo: str, letra: str, num_linha: int) -> str | None:
+    """Valor bruto do <v> da célula (None se ausente/vazia/self-closing).
+    O padrão não atravessa células vizinhas: `[^<]*` para no início da célula
+    seguinte e a abertura exige um `>` que não seja `/>`."""
+    m = re.search(rf'<c r="{letra}{num_linha}"((?:[^<]*[^/>])?)>'
+                  r'(?:<v>([^<]*)</v>)?</c>', corpo)
+    return m.group(2) if m else None
+
+
+def _trocar_celula_valor(corpo: str, letra: str, num_linha: int,
+                         valor: str, estilo_quando_vazio: int | None) -> str:
+    """Troca o <v> da célula preservando o estilo; célula vazia/ausente é
+    criada — com `estilo_quando_vazio` (None → s=15, o estilo dos valores)."""
+    ref = f"{letra}{num_linha}"
+    m = re.search(rf'<c r="{ref}"((?:[^<]*[^/>])?)>(.*?)</c>', corpo, flags=re.DOTALL)
+    if m:
+        attrs, conteudo = m.group(1), m.group(2)
+        if re.search(r"<v>.*?</v>", conteudo, flags=re.DOTALL):
+            novo_conteudo = re.sub(r"<v>.*?</v>", f"<v>{valor}</v>", conteudo,
+                                   count=1, flags=re.DOTALL)
+        else:
+            novo_conteudo = conteudo + f"<v>{valor}</v>"
+        return (corpo[:m.start()] + f'<c r="{ref}"{attrs}>{novo_conteudo}</c>'
+                + corpo[m.end():])
+    m = re.search(rf'<c r="{ref}"([^<]*)/>', corpo)
+    if m:
+        attrs = m.group(1)
+        if estilo_quando_vazio is not None:
+            attrs = re.sub(r'\s+s="\d+"', "", attrs) + f' s="{estilo_quando_vazio}"'
+        return (corpo[:m.start()] + f'<c r="{ref}"{attrs}><v>{valor}</v></c>'
+                + corpo[m.end():])
+    estilo = estilo_quando_vazio if estilo_quando_vazio is not None else 15
+    nova = f'<c r="{ref}" s="{estilo}"><v>{valor}</v></c>'
+    return corpo.rstrip()[:-len("</row>")] + nova + "</row>"
+
+
+def _upsert_bd1(xml_bd1: str, df_wpd: pd.DataFrame, remessas_existentes: set,
+                strings) -> tuple[str, list[dict], int] | None:
+    """UPSERT das remessas do WPD que JÁ existem na BD1: preenche/atualiza a
+    Baixa (F, s=57 quando vazia — convenção do arquivo real) e os valores
+    (I–Q) das linhas existentes. Baixa=None no WPD NÃO desfaz uma baixa já
+    gravada. Retorna (xml_novo, mudanças, células alteradas) ou None se nada
+    mudou. Cada mudança: {remessa_norm, num_linha, dados (de
+    _converter_linha_wpd), campos}."""
+    linhas = _linhas_bd1(xml_bd1, strings)
+    por_linha: dict[int, tuple[str, str]] = {}   # num_linha -> (abertura, corpo_novo)
+    mudancas: list[dict] = []
+    n_celulas = 0
+    for _, linha in df_wpd.iterrows():
+        rem_norm = _normalizar_remessa(linha["Remessa"])
+        if rem_norm not in remessas_existentes or rem_norm not in linhas:
+            continue
+        dados = _converter_linha_wpd(linha)
+        num_linha, abertura, corpo_novo = linhas[rem_norm]
+        campos = []
+        for col, letra in _COL_UPSERT.items():
+            novo = dados[col]
+            if novo is None:
+                continue  # sem valor no WPD: preserva o que está na planilha
+            atual = _valor_celula(corpo_novo, letra, num_linha)
+            if col == "Baixa":
+                serial = _numero((novo - SERIAL_EPOCA).days)
+                if _float_iguais(atual, serial):
+                    continue
+                corpo_novo = _trocar_celula_valor(corpo_novo, letra, num_linha,
+                                                  serial, estilo_quando_vazio=57)
+            else:
+                canon = _numero(novo)
+                if _float_iguais(atual, canon):
+                    continue
+                corpo_novo = _trocar_celula_valor(corpo_novo, letra, num_linha,
+                                                  canon, estilo_quando_vazio=None)
+            campos.append(col)
+            n_celulas += 1
+        if campos:
+            por_linha[num_linha] = (abertura, corpo_novo)
+            mudancas.append({"remessa_norm": rem_norm, "num_linha": num_linha,
+                             "dados": dados, "campos": campos})
+    if not mudancas:
+        return None
+    # UMA varredura do xml inteiro (o sheet5 real tem 36k+ rows): cada
+    # substituição isolada com re.subn custaria O(n) — juntas seriam O(n²).
+    trocadas: list[int] = []
+
+    def _troca_row(m):
+        par = por_linha.get(int(m.group(1)))
+        if par is None:
+            return m.group(0)
+        trocadas.append(int(m.group(1)))
+        abertura, corpo_novo = par
+        return abertura + corpo_novo + "</row>"
+    xml_bd1 = re.sub(r'<row r="(\d+)"[^>]*>.*?</row>', _troca_row,
+                     xml_bd1, flags=re.DOTALL)
+    if len(trocadas) != len(por_linha):
+        raise RuntimeError(f"upsert BD1: {len(por_linha) - len(trocadas)} "
+                           f"row(s) não localizada(s)")
+    return xml_bd1, mudancas, n_celulas
+
+
+# ==============================================================================
 # BD2 — bloco obsoleto, normalização da coluna A e bloco novo
 # ==============================================================================
 def _bloco_bd2(xlsx_limpo: str) -> list[dict] | None:
@@ -391,11 +531,14 @@ _COLS_CI = ["C", "D", "E", "F", "G", "H", "I"]
 
 def _float_iguais(a, b) -> bool:
     """Mesmo número: `a` é a string bruta do XML (ou None), `b` a canônica.
-    Igualdade NUMÉRICA — '610.41999999999996' == '610.42' (repr do Excel)."""
+    Igualdade NUMÉRICA com tolerância relativa de 1e-9 —
+    '610.41999999999996' == '610.42' (repr do Excel) e 928.95 ≈
+    928.9499999999999 (ruído de float do WPD) não reescrevem a célula."""
     if a is None or b is None:
         return a is None and b is None
     try:
-        return float(a) == float(b)
+        fa, fb = float(a), float(b)
+        return abs(fa - fb) <= 1e-9 * max(1.0, abs(fa), abs(fb))
     except ValueError:
         return a == b
 
@@ -587,18 +730,6 @@ def _parte_cache_bd2(partes: dict) -> str | None:
 # ==============================================================================
 # FASE 3c — caches embutidos + timeline + slicers (pivot_cache.py)
 # ==============================================================================
-def _janela_entrega(hoje: date | None = None) -> tuple[date, date]:
-    """Janela da timeline "Entrega": o mês de FECHAMENTO (mês anterior ao da
-    geração). O arquivo de referência de 03/09/2026 usa agosto/2026 mesmo
-    contendo entregas de 01–03/09 — a janela segue o calendário, não os dados."""
-    hoje = hoje or date.today()
-    if hoje.month > 1:
-        ano, mes = hoje.year, hoje.month - 1
-    else:
-        ano, mes = hoje.year - 1, 12
-    return date(ano, mes, 1), date(ano, mes, calendar.monthrange(ano, mes)[1])
-
-
 def _iso_cache(v: date | None) -> str | None:
     """Data no formato dos <d v> dos caches (ISO + T00:00:00)."""
     return f"{v.isoformat()}T00:00:00" if v is not None else None
@@ -680,6 +811,71 @@ def _record_bd1(dados: dict, cache: pc.CachePivot, hoje: date) -> str:
     return "<r>" + "".join(entradas) + "</r>"
 
 
+def _atualizar_records_bd1(cache: pc.CachePivot, mudancas: list[dict],
+                           hoje: date) -> None:
+    """Upsert dos records do cache da BD1: o record é localizado pelo x-ref da
+    Remessa (entrada 0) — o cache da base vem dessincronizado das linhas da
+    planilha em trechos antigos, então a posição NÃO serve de chave. Só as
+    posições dos campos alterados são reescritas (5 = Baixa via x-ref novo no
+    sharedItems; 8–16 = valores <n>); 17–20 (calculados R–U) são reavaliados
+    com TODAY() = data de geração, como em _record_bd1."""
+    if not mudancas:
+        return
+    blocos = cache.blocos()
+    # mapas numa passada: entrada 0 (x-ref da Remessa) -> índice do record,
+    # e itens do campo Remessa -> índice (o uso repetido de indice_existente/
+    # substituir_record sobre 36k records seria O(n²)).
+    por_entrada0 = {}
+    for i, b in enumerate(blocos):
+        m0 = re.match(r'<r><x v="(\d+)"/>', b)
+        if m0:
+            por_entrada0[int(m0.group(1))] = i
+    itens_remessa = cache.indices_por_valor("Remessa")
+    mapa: dict[int, str] = {}
+    for mudanca in mudancas:
+        rem = mudanca["remessa_norm"]
+        alvo = itens_remessa.get(("n", rem))
+        if alvo is None and re.fullmatch(r"\d+", rem):
+            alvo = itens_remessa.get(("n", rem + ".0"))
+        if alvo is None:
+            alvo = itens_remessa.get(("s", rem))
+        if alvo is None:
+            raise RuntimeError(
+                f"remessa {rem!r} não localizada no sharedItems do cache BD1")
+        indice_record = por_entrada0.get(alvo)
+        if indice_record is None:
+            raise RuntimeError(
+                f"remessa {rem!r} não localizada nos records do cache BD1")
+        entradas = re.findall(r"<(?:x|n|s|d|m)\b[^>]*/>", blocos[indice_record])
+        while len(entradas) < 22:
+            entradas.append("<m/>")
+        campos = set(mudanca["campos"])
+        dados = mudanca["dados"]
+        if "Baixa" in campos:
+            entradas[5] = _x_ref_ou_blank(cache, "Baixa", "d",
+                                          _iso_cache(dados["Baixa"]))
+        for i, col in enumerate(_COLS_UPSERT_APOS_BAIXA):
+            if col in campos:
+                entradas[8 + i] = _n_inline(dados[col])
+        # fórmulas R–U da planilha, avaliadas para o record do cache:
+        vlr_guia = dados["Vlr Guia"]
+        vencimento = dados["Vencimento"]
+        baixa = dados["Baixa"]
+        recurso = str(dados["Remessa"]).strip().endswith("(R)")
+        atrasado = ((vlr_guia or 0) if (vencimento is not None and vencimento < hoje
+                                        and baixa is None) else 0)
+        a_vencer = ((vlr_guia or 0) if (vencimento is not None and vencimento > hoje
+                                        and baixa is None) else 0)
+        recurso_v = (vlr_guia or 0) if recurso else 0
+        recurso_pago = (dados["Valor Pago"] or 0) if recurso_v != 0 else 0
+        entradas[17] = _n_inline(atrasado)
+        entradas[18] = _n_inline(a_vencer)
+        entradas[19] = _n_inline(recurso_v)
+        entradas[20] = _n_inline(recurso_pago)
+        mapa[indice_record] = "<r>" + "".join(entradas) + "</r>"
+    cache.substituir_records(mapa)
+
+
 def _record_bd2(item: dict, cache: pc.CachePivot) -> str:
     """Um <r> de 9 entradas para o cache da BD2: Convênio/Data x-ref,
     valores <n> inline (formato do Excel na referência 03/09)."""
@@ -694,10 +890,11 @@ def _record_bd2(item: dict, cache: pc.CachePivot) -> str:
 def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
              bloco: list[dict] | None, mapeamento_bd2: dict,
              fim_bd1_novo: int | None, fim_bd2_novo: int | None,
-             novas_bd2: list, atualizacoes_bd2: list) -> None:
-    """Regenera os caches embutidos (BD1/BD2) com os dados finais e grava os
-    estados de timeline/slicer/pivô do arquivo de referência — determinístico
-    a cada rodada (sem depender de o Excel recalcular ao abrir)."""
+             novas_bd2: list, atualizacoes_bd2: list,
+             mudancas_bd1: list | None = None) -> None:
+    """Regenera os caches embutidos (BD1/BD2) com os dados finais — determinístico
+    a cada rodada (sem depender de o Excel recalcular ao abrir). Timeline e
+    slicers do arquivo do usuário são PRESERVADOS (sem filtros forçados)."""
     hoje = date.today()
     nome_def_bd1 = pc.parte_cache_bd1(partes)
     nome_def_bd2 = pc.parte_cache_bd2(partes)
@@ -715,6 +912,12 @@ def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
             [_record_bd1(_converter_linha_wpd(linha), cache_bd1, hoje)
              for _, linha in novas.iterrows()])
 
+    # -- BD1: upsert dos records das remessas existentes atualizadas --
+    # (os itens de data novos entram no sharedItems do campo Baixa ANTES de
+    # novos_por_campo() alimentar as pivôs 1–3)
+    if mudancas_bd1:
+        _atualizar_records_bd1(cache_bd1, mudancas_bd1, hoje)
+
     # -- BD2: records das linhas novas + normalização dos convênios + upsert
     # das linhas editadas — as demais linhas da base permanecem intactas na
     # planilha e no cache; entram só as linhas do bloco sem chave repetida
@@ -730,15 +933,9 @@ def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
         if novas_bd2:
             cache_bd2.anexar_registros([_record_bd2(b, cache_bd2) for b in novas_bd2])
 
-    # -- timeline "Entrega" = mês de fechamento --
-    inicio, fim = _janela_entrega(hoje)
-    nome_timeline = pc.parte_timeline_entrega(partes)
-    substituicoes[nome_timeline] = pc.editar_timeline(partes[nome_timeline], inicio, fim)
-
-    # -- slicer "Tipo de remessa" (Data Entrega) = só Comum --
-    nome_slicer_tipo = pc.parte_slicer_tipo_data_entrega(partes)
-    substituicoes[nome_slicer_tipo] = pc.selecionar_slicer_tipo_remessa(
-        partes[nome_slicer_tipo])
+    # -- timeline "Entrega" e slicer "Tipo de remessa": PRESERVADOS do arquivo
+    # do usuário — sem a janela do mês de fechamento e sem a restrição "só
+    # Comum" (filtros forçados escondiam as baixas e os recursos no relatório)
 
     # -- slicers "Convênio": novos itens entram marcados (BD1→tabs 3/6/11; BD2→tab 8) --
     novos_conv_bd1 = cache_bd1.novos_indices("Convênio")
@@ -764,12 +961,6 @@ def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
             if com_sd:
                 xml = pc.colapsar_itens_pivot(xml, idx)
         substituicoes[nome] = xml
-
-    # -- pivot1: esconde Recurso (x=1) e vazio (x=2) no campo 21 (Tipo) --
-    nome_p1 = "xl/pivotTables/pivotTable1.xml"
-    xml_p1 = substituicoes[nome_p1]
-    if pc.campo_tem_itens(xml_p1, 21):
-        substituicoes[nome_p1] = pc.esconder_itens_pivot(xml_p1, 21, [1, 2])
 
     # -- pivô 4 (À Quitar, cache BD2): campos 0 (Convênio) e 1 (Data) --
     nome_p4 = "xl/pivotTables/pivotTable4.xml"
@@ -805,14 +996,6 @@ def _validar_pivos(substituicoes: dict, partes: dict, cache_bd1: pc.CachePivot,
         xml = substituicoes.get(f"xl/pivotTables/pivotTable{i}.xml")
         if xml is not None and "refreshOnLoad" in xml:
             erros.append(f"pivotTable{i} ainda contém refreshOnLoad")
-    tl = substituicoes.get(pc.parte_timeline_entrega(partes))
-    if tl is not None and ('filterType="dateBetween"' not in tl or "<selection" not in tl):
-        erros.append("timeline Entrega sem dateBetween/selection")
-    st = substituicoes.get(pc.parte_slicer_tipo_data_entrega(partes))
-    if st is not None:
-        selecionados = re.findall(r'<i x="(\d+)" s="1"', st)
-        if selecionados != ["0"]:
-            erros.append(f"slicer Tipo de remessa com seleção inesperada: {selecionados}")
     if fim_bd1_novo is not None and cache_bd1.n_registros != fim_bd1_novo - 1:
         erros.append(f"cache BD1 com {cache_bd1.n_registros} records ≠ planilha "
                      f"({fim_bd1_novo - 1} linhas de dados)")
@@ -897,6 +1080,7 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
     novas_celulas = 0
     fim_bd1_novo = None
     houve_mudanca_bd1 = False
+    mudancas_bd1: list = []
 
     # ---- FASE 3a: BD1 — anexa as remessas novas do WPD ----
     remessas_existentes = _remessas_bd1(partes["xl/worksheets/sheet5.xml"], strings)
@@ -913,6 +1097,18 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
         substituicoes["xl/tables/table1.xml"] = _ajustar_tabela(
             partes["xl/tables/table1.xml"], "A1:V", fim_bd1_novo)
         print(f"[FASE 3] BD1: {len(novas)} remessa(s) anexada(s) — fim {fim_bd1_novo}.")
+
+    # ---- FASE 3a2: BD1 — upsert de baixa/valores das remessas existentes ----
+    resultado_upsert = _upsert_bd1(
+        substituicoes.get("xl/worksheets/sheet5.xml",
+                          partes["xl/worksheets/sheet5.xml"]),
+        df_wpd, remessas_existentes, strings)
+    if resultado_upsert is not None:
+        xml_bd1, mudancas_bd1, n_cels_upsert = resultado_upsert
+        substituicoes["xl/worksheets/sheet5.xml"] = xml_bd1
+        houve_mudanca_bd1 = True
+        print(f"[FASE 3] BD1: {len(mudancas_bd1)} remessa(s) existente(s) "
+              f"atualizada(s) — {n_cels_upsert} célula(s).")
 
     # ---- FASE 3b: BD2 — bloco novo do Não Identificado (R5: tolera limpo=None) ----
     bloco = None
@@ -949,7 +1145,8 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
                           or "xl/worksheets/sheet6.xml" in substituicoes)
     if mudou_alguma_coisa:
         _fase_3c(partes, substituicoes, novas, bloco, mapeamento_bd2,
-                 fim_bd1_novo, fim_bd2_novo, novas_bd2, atualizacoes_bd2)
+                 fim_bd1_novo, fim_bd2_novo, novas_bd2, atualizacoes_bd2,
+                 mudancas_bd1)
 
     # ---- FASE 4: gravação ----
     if mudou_alguma_coisa:

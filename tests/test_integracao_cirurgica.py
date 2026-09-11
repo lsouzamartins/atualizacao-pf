@@ -727,7 +727,6 @@ def test_processamento_completo(tmp_path):
     assert linhas2[3][0] == "Convênio Novo 2"
     assert linhas2[3][9] == 1
 
-    inicio, fim = ie._janela_entrega()
     with zipfile.ZipFile(base) as zb, zipfile.ZipFile(final) as zf:
         # partes intocadas preservadas byte a byte
         assert zb.read("xl/styles.xml") == zf.read("xl/styles.xml")
@@ -773,21 +772,13 @@ def test_processamento_completo(tmp_path):
             p = zf.read(f"xl/pivotTables/pivotTable{i}.xml").decode("utf-8")
             assert "refreshOnLoad" not in p
 
-        # timeline "Entrega" = mês de fechamento (dateBetween + selection antes
-        # dos bounds); "Vencimento" permanece intocada
-        tl1 = zf.read("xl/timelineCaches/timelineCache1.xml").decode("utf-8")
-        assert 'filterType="dateBetween"' in tl1
-        assert (f'<selection startDate="{inicio.isoformat()}T00:00:00" '
-                f'endDate="{fim.isoformat()}T00:00:00"/>') in tl1
-        assert "<bounds " in tl1
-        tl2 = zf.read("xl/timelineCaches/timelineCache2.xml").decode("utf-8")
-        assert 'filterType="unknown"' in tl2 and "<selection" not in tl2
-
-        # slicer Tipo da Data Entrega só em Comum; os das outras abas intocados
-        sc3 = zf.read("xl/slicerCaches/slicerCache3.xml").decode("utf-8")
-        assert re.findall(r'<i x="(\d+)" s="1"', sc3) == ["0"]
-        sc4 = zf.read("xl/slicerCaches/slicerCache4.xml").decode("utf-8")
-        assert re.findall(r'<i x="(\d+)" s="1"', sc4) == ["0", "1", "2"]
+        # timeline "Entrega" e slicer "Tipo de remessa" PRESERVADOS do arquivo
+        # do usuário — sem janela de fechamento forçada e sem restrição "só
+        # Comum" (as baixas e os recursos têm de aparecer no relatório)
+        assert zb.read("xl/timelineCaches/timelineCache1.xml") == \
+            zf.read("xl/timelineCaches/timelineCache1.xml")
+        assert zb.read("xl/slicerCaches/slicerCache3.xml") == \
+            zf.read("xl/slicerCaches/slicerCache3.xml")
         # slicers Convênio: novos convênios entram marcados (BD1 tabs 3/6/11,
         # BD2 tab 8 — índices 1 e 2 do cache de cada BD)
         for n in ("slicerCache1.xml", "slicerCache2.xml", "slicerCache5.xml",
@@ -796,10 +787,11 @@ def test_processamento_completo(tmp_path):
             assert 'count="3"' in sc
             assert '<i x="1" s="1"/>' in sc and '<i x="2" s="1"/>' in sc
 
-        # pivôs 1–3: itens novos anexados; convênios colapsados (sd="0")
+        # pivôs 1–3: itens novos anexados; convênios colapsados (sd="0");
+        # campo 21 (Tipo de remessa) SEM itens ocultos — Recurso fica visível
         p1 = zf.read("xl/pivotTables/pivotTable1.xml").decode("utf-8")
-        assert '<item x="1" h="1"/>' in p1          # Recurso oculto (campo 21)
-        assert '<item m="1" x="2" h="1"/>' in p1    # vazio oculto (campo 21)
+        assert '<item x="1" h="1"/>' not in p1
+        assert '<item m="1" x="2" h="1"/>' not in p1
         assert '<item x="0" sd="0"/>' in p1         # convênio colapsado
         assert '<item x="1" sd="0"/>' in p1         # convênio novo colapsado
         assert '<item x="1"/>' in p1                # remessa/protocolo novos visíveis
@@ -851,9 +843,12 @@ def test_limpo_none_integra_so_bd1(tmp_path):
         assert 'recordCount="1"' in def1
         assert 'ref="A1:I2"' in def1
         assert '<s v="Convênio Z "/>' in def1    # sem normalização (BD2 intocada)
-        # timeline/slicer/pivôs ajustados mesmo assim (a BD1 mudou)
-        tl1 = zf.read("xl/timelineCaches/timelineCache1.xml").decode("utf-8")
-        assert 'filterType="dateBetween"' in tl1
+        # timeline/slicer preservados do arquivo do usuário (a BD1 mudou, mas
+        # sem filtros forçados no relatório)
+        assert zb.read("xl/timelineCaches/timelineCache1.xml") == \
+            zf.read("xl/timelineCaches/timelineCache1.xml")
+        assert zb.read("xl/slicerCaches/slicerCache3.xml") == \
+            zf.read("xl/slicerCaches/slicerCache3.xml")
         for i in range(1, 5):
             assert "refreshOnLoad" not in zf.read(
                 f"xl/pivotTables/pivotTable{i}.xml").decode("utf-8")
