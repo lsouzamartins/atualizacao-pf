@@ -87,3 +87,14 @@ def test_exigir_login_tem_login_senha_entrar_em_portugues():
     assert 'st.button("Entrar"' in src
     # Subtítulo removido a pedido do usuário (12/09): só o título no cartão.
     assert "Entre com suas credenciais" not in src
+
+
+def test_exigir_login_tem_rodape_desenvolvedor():
+    """Rodapé da tela de login (a pedido): crédito do desenvolvedor."""
+    import auth
+    with open(auth.__file__, encoding="utf-8") as f:
+        src = f.read()
+    assert "Desenvolvedor: Leonardo Martins" in src
+    assert "09/2026" in src
+    assert "Desenvolvido com Claude Code" in src
+    assert ".login-rodape" in ui_comum.LOGIN_CSS

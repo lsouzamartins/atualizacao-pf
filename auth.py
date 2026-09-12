@@ -159,6 +159,12 @@ def exigir_login():
             if st.button("Esqueceu a senha?", type="tertiary", key="login_esqueceu"):
                 st.info("Esqueceu a senha? Fale com o administrador do sistema "
                         "para redefini-la.")
+    # Rodapé da tela de login (a pedido): crédito do desenvolvedor.
+    st.markdown(
+        '<div class="login-rodape">Desenvolvedor: Leonardo Martins · 09/2026 · '
+        'Desenvolvido com Claude Code</div>',
+        unsafe_allow_html=True,
+    )
     st.stop()
 
 

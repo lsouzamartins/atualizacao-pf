@@ -208,6 +208,13 @@ LOGIN_CSS = """
         padding: 2.2rem 1rem 0 1rem; letter-spacing: .2px;
     }
 
+    /* Rodapé da tela de login: crédito do desenvolvedor, fixo na base */
+    .login-rodape {
+        position: fixed; left: 0; right: 0; bottom: .8rem;
+        text-align: center; color: rgba(255, 255, 255, .55); font-size: .75rem;
+        letter-spacing: .2px;
+    }
+
     /* Área do formulário: centralizada vertical e horizontalmente */
     div[data-testid="stHorizontalBlock"] { min-height: calc(100vh - 9rem); align-items: center; }
 
