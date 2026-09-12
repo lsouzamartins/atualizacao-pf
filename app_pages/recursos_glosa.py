@@ -120,8 +120,9 @@ if todas:
 
 # ---- PRAZOS POR CONVÊNIO (ADMIN) ----
 if st.session_state["usuario"]["admin"]:
-    with st.expander(f"{icone('alarm-clock', 18)} Prazos por convênio (alertas)",
-                     unsafe_allow_html=True):
+    # st.expander não aceita unsafe_allow_html (TypeError no Streamlit do VPS)
+    # — o ícone HTML do label deu lugar a um label de texto simples
+    with st.expander("⏰ Prazos por convênio (alertas)"):
         for c in convenios:
             c1, c2 = st.columns([3, 1])
             atual = c["prazo_recurso_dias"]
