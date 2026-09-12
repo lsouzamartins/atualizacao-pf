@@ -49,3 +49,17 @@ def test_exigir_login_tem_titulo_cartao_e_mesma_logica():
     assert "banco.autenticar" in src
     assert "banco.registrar_falha" in src
     assert "st.stop()" in src
+
+
+def test_exigir_login_tem_login_senha_entrar_em_portugues():
+    """Estrutura do EPS: campo Login, 'Lembrar de mim', Entrar e 'Esqueceu a senha?'."""
+    import auth
+    with open(auth.__file__, encoding="utf-8") as f:
+        src = f.read()
+    assert 'st.text_input("Login"' in src
+    assert "Digite seu login" in src
+    assert "Digite seu usuário" not in src
+    assert '"Lembrar de mim"' in src
+    assert '"Esqueceu a senha?"' in src
+    assert "Fale com o administrador" in src
+    assert 'st.button("Entrar"' in src

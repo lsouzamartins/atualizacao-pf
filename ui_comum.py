@@ -260,6 +260,23 @@ LOGIN_CSS = """
 
     /* Mensagens de erro dentro do cartão */
     .login-card [data-testid="stAlert"] { border-radius: 10px; }
+
+    /* Checkbox 'Lembrar de mim' */
+    .login-card div[data-testid="stCheckbox"] { margin: .1rem 0 .9rem 0; }
+    .login-card div[data-testid="stCheckbox"] label p { color: #64748B; font-size: .88rem; }
+
+    /* Link 'Esqueceu a senha?' (botão terciário centralizado) */
+    .login-card div[data-testid="stButton"]:has(button[kind="tertiary"]) {
+        text-align: center; margin-top: 1.1rem;
+    }
+    .login-card div.stButton > button[kind="tertiary"] {
+        background: transparent !important; border: none !important; box-shadow: none !important;
+        color: #4D7CFE !important; font-size: .88rem !important; font-weight: 600 !important;
+        padding: .2rem .5rem !important;
+    }
+    .login-card div.stButton > button[kind="tertiary"]:hover {
+        color: #3153E8 !important; text-decoration: underline !important;
+    }
 </style>
 """
 

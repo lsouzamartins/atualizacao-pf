@@ -86,6 +86,7 @@ def _restaurar_sessao(token):
                                    "acesso_contas_receber":
                                        bool(usuario["acesso_contas_receber"])}
     st.session_state["token_sessao"] = token
+    st.session_state["lembrar_sessao"] = True  # sessão veio do cookie: mantém
     return True
 
 
@@ -117,12 +118,13 @@ def exigir_login():
         # O empty() reserva o espaço no topo do cartão; o markdown o preenche a
         # cada rerun (o on_change do campo dispara rerun a cada tecla digitada).
         slot_avatar = st.empty()
-        login = st.text_input("Usuário", placeholder="Digite seu usuário",
+        login = st.text_input("Login", placeholder="Digite seu login",
                               label_visibility="collapsed", key="login_usuario",
                               on_change=lambda: None)
         senha = st.text_input("Senha", type="password", placeholder="Digite sua senha",
                               label_visibility="collapsed", key="login_senha")
         slot_avatar.markdown(_avatar_login(login), unsafe_allow_html=True)
+        lembrar = st.checkbox("Lembrar de mim", key="login_lembrar")
         if st.button("Entrar", type="primary", width="stretch", key="login_entrar"):
             conn = _conexao()
             try:
@@ -140,19 +142,36 @@ def exigir_login():
                                                        "acesso_contas_receber":
                                                            bool(usuario["acesso_contas_receber"])}
                         st.session_state["token_sessao"] = token
+                        st.session_state["lembrar_sessao"] = bool(lembrar)
                         st.rerun()
                     else:
                         banco.registrar_falha(conn, login.strip())
                         st.error("Usuário ou senha incorretos.")
             finally:
                 conn.close()
+        # Estrutura do EPS: link de recuperação. Sem e-mail no sistema, o
+        # caminho real é o administrador redefinir na página Administração.
+        if st.button("Esqueceu a senha?", type="tertiary", key="login_esqueceu"):
+            st.info("Esqueceu a senha? Fale com o administrador do sistema "
+                    "para redefini-la.")
         st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
 
-def manter_cookie_sessao():
-    """Grava o cookie 'pf_sessao' no navegador via componente invisível.
+def script_cookie_sessao(token):
+    """JS que grava (token) ou apaga (None) o cookie 'pf_sessao' no navegador."""
+    if token:
+        return (f'document.cookie = "{NOME_COOKIE}={token}; max-age=604800; '
+                'path=/; SameSite=Lax; Secure";')
+    return (f'document.cookie = "{NOME_COOKIE}=; max-age=0; '
+            'path=/; SameSite=Lax; Secure";')
 
+
+def manter_cookie_sessao():
+    """Grava ou apaga o cookie 'pf_sessao' conforme a escolha 'Lembrar de mim'.
+
+    Marcado: cookie de 7 dias (sessão restaurada nas próximas visitas).
+    Desmarcado: apaga cookie antigo, se houver (sessão só nesta aba).
     O Streamlit 1.60 não tem API de escrita de cookies (st.cookies só chega
     em versões posteriores); o JS do iframe grava document.cookie (mesma
     origem, permitido pelo sandbox) e o st.context.cookies o lê na próxima
@@ -161,10 +180,9 @@ def manter_cookie_sessao():
     token = st.session_state.get("token_sessao")
     if not token:
         return
+    lembrar = st.session_state.get("lembrar_sessao", False)
     st.components.v1.html(
-        "<script>"
-        f"document.cookie = \"{NOME_COOKIE}={token}; max-age=604800; path=/; SameSite=Lax; Secure\";"
-        "</script>",
+        f"<script>{script_cookie_sessao(token if lembrar else None)}</script>",
         height=0, width=0,
     )
 
