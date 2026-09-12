@@ -108,53 +108,58 @@ def exigir_login():
                 unsafe_allow_html=True)
     _, col_centro, _ = st.columns([1, 2, 1], vertical_alignment="center")
     with col_centro:
-        st.markdown('<div class="login-card">', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="login-card-titulo">Acesso ao sistema</div>'
-            '<div class="login-card-sub">Entre com suas credenciais para continuar.</div>',
-            unsafe_allow_html=True,
-        )
-        # Avatar do usuário digitado: foto cadastrada, inicial ou ícone padrão.
-        # O empty() reserva o espaço no topo do cartão; o markdown o preenche a
-        # cada rerun (o on_change do campo dispara rerun a cada tecla digitada).
-        slot_avatar = st.empty()
-        login = st.text_input("Login", placeholder="Digite seu login",
-                              label_visibility="collapsed", key="login_usuario",
-                              on_change=lambda: None)
-        senha = st.text_input("Senha", type="password", placeholder="Digite sua senha",
-                              label_visibility="collapsed", key="login_senha")
-        slot_avatar.markdown(_avatar_login(login), unsafe_allow_html=True)
-        lembrar = st.checkbox("Lembrar de mim", key="login_lembrar")
-        if st.button("Entrar", type="primary", width="stretch", key="login_entrar"):
-            conn = _conexao()
-            try:
-                banco.inicializar_banco(conn)  # garante as tabelas (inclusive sessoes)
-                pode, _ = banco.pode_tentar(conn, login.strip())
-                if not pode:
-                    st.error("Muitas tentativas erradas. Aguarde 5 minutos e tente de novo.")
-                else:
-                    usuario = banco.autenticar(conn, login.strip(), senha)
-                    if usuario is not None:
-                        token = banco.criar_sessao(conn, login.strip())
-                        st.session_state["autenticado"] = True
-                        st.session_state["usuario"] = {"login": login.strip(),
-                                                       "admin": bool(usuario["admin"]),
-                                                       "acesso_contas_receber":
-                                                           bool(usuario["acesso_contas_receber"])}
-                        st.session_state["token_sessao"] = token
-                        st.session_state["lembrar_sessao"] = bool(lembrar)
-                        st.rerun()
+        # Cartão do login: st.container(border=True) é o único wrapper que de
+        # fato envolve os widgets. Uma <div> aberta num markdown e fechada em
+        # outro não aninha — o HTML de cada elemento é um fragmento separado
+        # (a div fecha sozinha e o cartão renderizava vazio, como um quadrado
+        # branco acima do formulário). O LOGIN_CSS mira este container via
+        # div[data-testid="stVerticalBlockBorderWrapper"].
+        with st.container(border=True):
+            st.markdown(
+                '<div class="login-card-titulo">Acesso ao sistema</div>'
+                '<div class="login-card-sub">Entre com suas credenciais para continuar.</div>',
+                unsafe_allow_html=True,
+            )
+            # Avatar do usuário digitado: foto cadastrada, inicial ou ícone padrão.
+            # O empty() reserva o espaço no topo do cartão; o markdown o preenche a
+            # cada rerun (o on_change do campo dispara rerun a cada tecla digitada).
+            slot_avatar = st.empty()
+            login = st.text_input("Login", placeholder="Digite seu login",
+                                  label_visibility="collapsed", key="login_usuario",
+                                  on_change=lambda: None)
+            senha = st.text_input("Senha", type="password", placeholder="Digite sua senha",
+                                  label_visibility="collapsed", key="login_senha")
+            slot_avatar.markdown(_avatar_login(login), unsafe_allow_html=True)
+            lembrar = st.checkbox("Lembrar de mim", key="login_lembrar")
+            if st.button("Entrar", type="primary", width="stretch", key="login_entrar"):
+                conn = _conexao()
+                try:
+                    banco.inicializar_banco(conn)  # garante as tabelas (inclusive sessoes)
+                    pode, _ = banco.pode_tentar(conn, login.strip())
+                    if not pode:
+                        st.error("Muitas tentativas erradas. Aguarde 5 minutos e tente de novo.")
                     else:
-                        banco.registrar_falha(conn, login.strip())
-                        st.error("Usuário ou senha incorretos.")
-            finally:
-                conn.close()
-        # Estrutura do EPS: link de recuperação. Sem e-mail no sistema, o
-        # caminho real é o administrador redefinir na página Administração.
-        if st.button("Esqueceu a senha?", type="tertiary", key="login_esqueceu"):
-            st.info("Esqueceu a senha? Fale com o administrador do sistema "
-                    "para redefini-la.")
-        st.markdown('</div>', unsafe_allow_html=True)
+                        usuario = banco.autenticar(conn, login.strip(), senha)
+                        if usuario is not None:
+                            token = banco.criar_sessao(conn, login.strip())
+                            st.session_state["autenticado"] = True
+                            st.session_state["usuario"] = {"login": login.strip(),
+                                                           "admin": bool(usuario["admin"]),
+                                                           "acesso_contas_receber":
+                                                               bool(usuario["acesso_contas_receber"])}
+                            st.session_state["token_sessao"] = token
+                            st.session_state["lembrar_sessao"] = bool(lembrar)
+                            st.rerun()
+                        else:
+                            banco.registrar_falha(conn, login.strip())
+                            st.error("Usuário ou senha incorretos.")
+                finally:
+                    conn.close()
+            # Estrutura do EPS: link de recuperação. Sem e-mail no sistema, o
+            # caminho real é o administrador redefinir na página Administração.
+            if st.button("Esqueceu a senha?", type="tertiary", key="login_esqueceu"):
+                st.info("Esqueceu a senha? Fale com o administrador do sistema "
+                        "para redefini-la.")
     st.stop()
 
 

@@ -17,10 +17,20 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def test_login_css_tem_estrutura_centralizada():
-    assert ".login-card" in ui_comum.LOGIN_CSS
+    assert "stVerticalBlockBorderWrapper" in ui_comum.LOGIN_CSS
     assert ".login-titulo-pagina" in ui_comum.LOGIN_CSS
     assert "stTextInput" in ui_comum.LOGIN_CSS
     assert "linear-gradient" in ui_comum.LOGIN_CSS
+
+
+def test_exigir_login_cartao_usado_com_container_com_borda():
+    """O cartão deve envolver os widgets de verdade (padrão do portal.py),
+    não uma div aberta/fechada em markdowns separados (nunca aninha)."""
+    import auth
+    with open(auth.__file__, encoding="utf-8") as f:
+        src = f.read()
+    assert "st.container(border=True)" in src
+    assert '<div class="login-card">' not in src
 
 
 def test_login_css_nao_cita_o_hospital():
@@ -28,12 +38,14 @@ def test_login_css_nao_cita_o_hospital():
     assert "Hias" not in ui_comum.LOGIN_CSS
 
 
-def test_login_css_cartao_quadrado_no_tamanho_do_eps():
-    """Cartão no tamanho do 6719.eps (288pt ≈ 384px), com conteúdo compacto."""
+def test_login_css_cartao_quadrado_480px():
+    """Cartão quadrado de 480px — maior que o 6719.eps (288pt ≈ 384px), a
+    pedido do usuário — com conteúdo proporcional."""
     css = ui_comum.LOGIN_CSS
-    assert "width: 384px" in css      # cartão quadrado no tamanho do EPS
-    assert "width: 72px" in css       # avatar reduzido para caber no quadrado
-    assert "min-height: 38px" in css  # campos mais compactos
+    assert "width: 480px" in css       # cartão quadrado no tamanho pedido
+    assert "min-height: 480px" in css  # quadrado: mesma altura mínima
+    assert "width: 84px" in css        # avatar proporcional
+    assert "min-height: 42px" in css   # campos proporcionais
 
 
 def test_nenhum_logo_do_hospital_na_interface():
