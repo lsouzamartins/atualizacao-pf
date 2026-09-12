@@ -196,13 +196,24 @@ def test_atualizar_registro_valor_alem_do_record_aborta():
 
 
 def test_atualizar_registro_preserva_string_e_wildcard():
-    """<s> (string histórica da base) nunca é substituída; None em
-    valores_antigos é wildcard (posições não comparadas)."""
+    """<s> (string histórica da base) é preservada quando o valor novo é None;
+    None em valores_antigos é wildcard (posições não comparadas)."""
     cache = pc.CachePivot(_def([]), _records(
         ['<n v="21.87"/><s v="              "/><n v="0"/>']))
     cache.atualizar_registro(0, ["50000", None, None], ["21.87", None, None])
     _, registros = cache.para_xml()
     assert '<r><n v="50000"/><s v="              "/><n v="0"/></r>' in registros
+
+
+def test_atualizar_registro_converte_string_em_numero_quando_valor_novo():
+    """<s> com valor novo (≠ None) vira <n> — a célula correspondente foi
+    convertida na planilha (quitação do NI); o record acompanha a planilha."""
+    cache = pc.CachePivot(_def([]), _records(
+        ['<n v="21.87"/><s v="              "/><n v="0"/>']))
+    cache.atualizar_registro(0, ["50000", "10.69", None],
+                             ["21.87", None, None])
+    _, registros = cache.para_xml()
+    assert '<r><n v="50000"/><n v="10.69"/><n v="0"/></r>' in registros
 
 
 def test_atualizar_registro_dois_records_candidatos_aborta_por_ambiguidade():

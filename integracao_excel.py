@@ -519,13 +519,15 @@ def _bloco_bd2(xlsx_limpo: str) -> list[dict] | None:
 
 def _linha_bd2(num_linha: int, convenio: str, data_serial: int,
                valores: list, strings) -> str:
-    """Uma <row> da BD2: A string s=34, B data s=16 (mm-dd-yy, igual às linhas
-    existentes), C–I números s=53, J =1 s=17 (J=1 mantém a formatação
-    condicional $J2=1/$J2=2 — recomendação da investigação)."""
-    cels = [_celula(f"A{num_linha}", 34, str(strings.obter_indice(convenio)), tipo="s"),
+    """Uma <row> da BD2 com os MESMOS estilos das linhas existentes da base:
+    A string s=5 (fonte escura — o s=34 antigo era fonte branca, nome
+    invisível), B data s=16 (mm-dd-yy), C–I números s=49 (máscara #,##0.00 —
+    o s=53 antigo era fundo amarelo sem máscara), J =1 s=17 (J=1 mantém a
+    formatação condicional $J2=1/$J2=2)."""
+    cels = [_celula(f"A{num_linha}", 5, str(strings.obter_indice(convenio)), tipo="s"),
             _celula(f"B{num_linha}", 16, str(data_serial))]
     for i, v in enumerate(valores):  # C..I
-        cels.append(_celula(f"{chr(ord('C') + i)}{num_linha}", 53, _numero(v)))
+        cels.append(_celula(f"{chr(ord('C') + i)}{num_linha}", 49, _numero(v)))
     cels.append(_celula(f"J{num_linha}", 17, "1"))
     return f'<row r="{num_linha}">{"".join(cels)}</row>'
 
@@ -565,8 +567,14 @@ def _upsert_c_i(corpo: str, linha: int, novos: list) -> str:
         col, attrs, atual = m.group(1), m.group(3) or "", m.group(4)
         i = ord(col) - ord("C")
         novo = novos[i] if i < len(novos) else None
-        if novo is None or 't="s"' in attrs or _float_iguais(atual, novo):
+        if novo is None or _float_iguais(atual, novo):
             return m.group(0)
+        if 't="s"' in attrs:
+            # string de espaços convertida pela quitação (valor real do NI):
+            # a célula inteira vira numérica com o estilo das demais (s=49)
+            attrs_novos = re.sub(r'\s+t="s"', "", attrs)
+            attrs_novos = re.sub(r'\s+s="\d+"', "", attrs_novos) + ' s="49"'
+            return f'<c r="{col}{linha}"{attrs_novos}><v>{novo}</v></c>'
         if m.group(4) is None:  # célula sem <v>
             if m.group(0).endswith("/>"):
                 return m.group(0)[:-2] + f'><v>{novo}</v></c>'
@@ -633,8 +641,22 @@ def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | 
                 vals, antigos = [], []
                 for i, novo in enumerate(novos_vals):
                     v_bruto, eh_str = atuais.get(_COLS_CI[i], (None, False))
-                    if eh_str or _float_iguais(v_bruto, novo):
-                        # string histórica intocada; mesmo número não reescreve
+                    if eh_str:
+                        # string histórica: converte para número SÓ quando o NI
+                        # traz valor real (≠ 0) e a string é só espaços —
+                        # quitação registrada no NI aparece; vazios históricos
+                        # (NI=0) e textos reais ficam intocados.
+                        if (novo is not None and not _float_iguais("0", novo)
+                                and (v_bruto is None
+                                     or strings.texto_de_indice(int(v_bruto)).strip() == "")):
+                            vals.append(novo)
+                            antigos.append(None)  # record guarda a string inline
+                        else:
+                            vals.append(None)
+                            antigos.append(None)
+                        continue
+                    if _float_iguais(v_bruto, novo):
+                        # mesmo número não reescreve
                         vals.append(None)
                         antigos.append(None)
                         continue

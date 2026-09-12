@@ -236,8 +236,9 @@ class CachePivot:
         None é wildcard (posição string ou ausente, não comparada). Se o
         record do índice não bater, é localizado pelos valores antigos —
         linha da BD2 <-> record andam juntos e uma divergência aqui é sinal de
-        bug, nunca de gravação cega. Entradas <s> (strings históricas) nunca
-        são substituídas."""
+        bug, nunca de gravação cega. Entrada <s> com valor novo chega a ser
+        convertida em <n> (a célula correspondente foi convertida na planilha
+        — quitação do NI); com valor None é preservada."""
         if valores == valores_antigos:
             return  # sem mudança
         idx_fim = self._reg.rindex("</pivotCacheRecords>")
@@ -286,10 +287,9 @@ class CachePivot:
         def _troca(m):
             i = contador[0]
             contador[0] += 1
-            if m.group(2) is not None:  # <s> — string histórica, nunca substituída
-                return m.group(0)
             novo = valores[i] if i < len(valores) else None
-            if novo is None or novo == m.group(1):
+            atual = m.group(1) or m.group(2)   # <n> ou <s>
+            if novo is None or novo == atual:
                 return m.group(0)
             return f'<n v="{novo}"/>'
 

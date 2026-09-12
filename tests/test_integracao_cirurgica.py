@@ -60,15 +60,18 @@ def test_strings_compartilhadas_acrescenta_e_conta():
 # Montagem de linhas (BD1 e BD2)
 # ==============================================================================
 def test_linha_bd2_estilos_e_referencias():
+    """Linha nova da BD2 com os MESMOS estilos das linhas existentes: A s=5
+    (fonte escura — s=34 era fonte branca, nome invisível) e C–I s=49
+    (máscara #,##0.00 — s=53 era fundo amarelo sem máscara)."""
     s = ie._StringsCompartilhadas(_sst(["ALGUM CONVÊNIO"]))
     linha = ie._linha_bd2(806, "ALGUM CONVÊNIO", 45001,
                           [1.5, 2.0, None, 1000, 0.0, 0.0, 0.0], s)
     assert '<row r="806">' in linha
-    assert '<c r="A806" s="34" t="s"><v>0</v></c>' in linha
+    assert '<c r="A806" s="5" t="s"><v>0</v></c>' in linha
     assert '<c r="B806" s="16"><v>45001</v></c>' in linha
-    assert '<c r="C806" s="53"><v>1.5</v></c>' in linha
-    assert '<c r="D806" s="53"><v>2</v></c>' in linha
-    assert '<c r="E806" s="53"/>' in linha
+    assert '<c r="C806" s="49"><v>1.5</v></c>' in linha
+    assert '<c r="D806" s="49"><v>2</v></c>' in linha
+    assert '<c r="E806" s="49"/>' in linha
     assert '<c r="J806" s="17"><v>1</v></c>' in linha
 
 
@@ -157,7 +160,7 @@ def test_editar_bd2_preserva_base_deduplica_e_insere():
     assert '<c r="A2" s="34" t="s"><v>3</v></c>' in xml
     assert '<c r="A805" s="34" t="s"><v>3</v></c>' in xml
     # linha nova começa em 809 (fim atual + 1), com a data em estilo mm-dd-yy
-    assert '<c r="A809" s="34" t="s"><v>3</v></c>' in xml
+    assert '<c r="A809" s="5" t="s"><v>3</v></c>' in xml
     assert '<c r="B809" s="16"><v>45001</v></c>' in xml
     assert '<c r="J809" s="17"><v>1</v></c>' in xml
     # dimension
@@ -245,6 +248,42 @@ def test_editar_bd2_upsert_nao_toca_string_nem_repr_de_float():
     assert '<c r="C2" s="49"><v>610.41999999999996</v></c>' in xml  # repr intocado
     assert '<c r="E2" s="49" t="s"><v>107</v></c>' in xml             # string intocada
     assert '<c r="D2" s="49"><v>9</v></c>' in xml                     # ausente criada
+
+
+def test_editar_bd2_quitacao_converte_string_de_espacos_em_numero():
+    """Quitação registrada no NI (valor ≠ 0) em célula t='s' de espaços deve
+    converter a célula para número s=49 — defeito de 11/09: as quitações de
+    02/09 (10,69 / 17.151,47 / 18.730) não apareciam na BD2. String de espaços
+    com NI=0 (vazio histórico) e string com conteúdo real ficam intocadas."""
+    s = ie._StringsCompartilhadas(
+        _sst(["CABEÇALHO", "Convênio", "              ", "TEXTO REAL"]))
+    xml_base = (DECL
+                + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                + '<dimension ref="A1:J2"/>'
+                + '<sheetData>'
+                + '<row r="1" spans="1:10"><c r="A1" s="34" t="s"><v>0</v></c></row>'
+                + '<row r="2" spans="1:10"><c r="A2" s="5" t="s"><v>1</v></c>'
+                + '<c r="B2" s="16"><v>45000</v></c>'
+                + '<c r="E2" s="49" t="s"><v>2</v></c>'      # espaços
+                + '<c r="G2" s="49" t="s"><v>3</v></c>'      # texto real
+                + '<c r="H2" s="49" t="s"><v>2</v></c></row>'  # espaços
+                + '</sheetData>'
+                + '</worksheet>')
+    xml, fim, nc, mapa, novas, atts = ie._editar_bd2(
+        xml_base,
+        [{"convenio": "Convênio", "data": 45000,
+          "valores": [1.0, 2.0, 10.69, 4.0, 5.0, 0.0, 7.0]}],  # E=10,69 H=0
+        s)
+    assert fim == 2
+    assert novas == [] and nc == 0
+    assert len(atts) == 1
+    # E: espaços + NI=10,69 -> número s=49 (a quitação aparece)
+    assert '<c r="E2" s="49"><v>10.69</v></c>' in xml
+    # H: espaços + NI=0 -> intocada; G: texto real -> intocada
+    assert '<c r="H2" s="49" t="s"><v>2</v></c>' in xml
+    assert '<c r="G2" s="49" t="s"><v>3</v></c>' in xml
+    assert atts[0]["valores"][2] == "10.69"       # E entra no upsert do record
+    assert atts[0]["valores"][5] is None          # H fora
 
 
 def test_editar_bd2_sem_mudanca_devolve_none():
