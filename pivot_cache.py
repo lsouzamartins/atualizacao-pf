@@ -174,6 +174,25 @@ class CachePivot:
         self._reg = self._reg[:idx] + "".join(blocos) + self._reg[idx:]
         self._n_registros += len(blocos)
 
+    def inserir_registros(self, posicao: int, blocos: list[str]) -> None:
+        """Insere `blocos` ANTES do record de índice `posicao` (0-based) —
+        linhas novas da BD2 entram ORDENADAS no meio do cache, na mesma
+        posição das linhas da planilha (record i = linha i+2)."""
+        if not blocos:
+            return
+        idx_fim = self._reg.rindex("</pivotCacheRecords>")
+        cabeca = self._reg[:idx_fim]
+        primeiro = cabeca.index("<r>")
+        prefixo = cabeca[:primeiro]
+        existentes = _RE_R.findall(cabeca[primeiro:])
+        if not 0 <= posicao <= len(existentes):
+            raise RuntimeError(
+                f"inserir_registros: posição {posicao} inválida "
+                f"({len(existentes)} records)")
+        self._reg = (prefixo + "".join(existentes[:posicao]) + "".join(blocos)
+                     + "".join(existentes[posicao:]) + self._reg[idx_fim:])
+        self._n_registros += len(blocos)
+
     def blocos(self) -> list[str]:
         """Os records <r> em ordem, para leitura."""
         idx_fim = self._reg.rindex("</pivotCacheRecords>")

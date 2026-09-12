@@ -76,6 +76,10 @@ def test_linha_bd2_estilos_e_referencias():
 
 
 def test_linha_bd1_formulas_e_cache_da_coluna_v():
+    """Linha nova da BD1 com os estilos das linhas EXISTENTES (dominantes da
+    base): A s=54, B s=55, C-F s=57 (F vazio s=58), M/O s=32, P/Q s=33,
+    R-U s=35, V s=37 — o mapa antigo (36/45/46/38/39/41/43) trazia fundo
+    amarelo em A/M/O e fonte branca em B/P/Q."""
     s = ie._StringsCompartilhadas(_sst(["HOSPITAL ABC"]))
     dados = {"Remessa": "139159 (R)", "Protocolo": 118,
              "Emissão": date(2026, 8, 31), "Vencimento": date(2026, 9, 30),
@@ -87,15 +91,18 @@ def test_linha_bd1_formulas_e_cache_da_coluna_v():
     serial_emissao = (date(2026, 8, 31) - ie.SERIAL_EPOCA).days
     assert refs == 2  # A (string) + H (convênio)
     # a remessa "139159 (R)" é acrescentada ao fim (índice 1); H usa o índice 0
-    assert '<c r="A34112" s="36" t="s"><v>1</v></c>' in linha
-    assert '<c r="B34112" s="45"><v>118</v></c>' in linha
-    assert f'<c r="C34112" s="46"><v>{serial_emissao}</v></c>' in linha
-    assert '<c r="E34112" s="46"/>' in linha   # Entrega vazia
-    assert '<c r="F34112" s="57"/>' in linha   # Baixa vazia usa s=57
+    assert '<c r="A34112" s="54" t="s"><v>1</v></c>' in linha
+    assert '<c r="B34112" s="55"><v>118</v></c>' in linha
+    assert f'<c r="C34112" s="57"><v>{serial_emissao}</v></c>' in linha
+    assert '<c r="E34112" s="57"/>' in linha   # Entrega vazia
+    assert '<c r="F34112" s="58"/>' in linha   # Baixa vazia usa s=58
+    assert '<c r="M34112" s="32"><v>0</v></c>' in linha
+    assert '<c r="O34112" s="32"><v>0</v></c>' in linha
+    assert '<c r="P34112" s="33"><v>0</v></c>' in linha
     assert '<c r="H34112" s="14" t="s"><v>0</v></c>' in linha
-    assert ('<c r="R34112" s="41"><f>=SUMIFS(L34112,D34112,"&lt;"&amp;TODAY(),F34112,"")</f></c>'
+    assert ('<c r="R34112" s="35"><f>=SUMIFS(L34112,D34112,"&lt;"&amp;TODAY(),F34112,"")</f></c>'
             in linha)
-    assert ('<c r="V34112" s="43" t="str"><f>=IF(RIGHT(A34112,3)="(R)","Recurso","Comum")</f><v>Recurso</v></c>'
+    assert ('<c r="V34112" s="37" t="str"><f>=IF(RIGHT(A34112,3)="(R)","Recurso","Comum")</f><v>Recurso</v></c>'
             in linha)
 
 
@@ -109,9 +116,9 @@ def test_linha_bd1_remessa_numerica_sem_string():
              "Valor Glosa": 0.0, "% Glosa": 0.0, "Atraso": 0.0, "Faturas": 1.0}
     linha, refs = ie._linha_bd1_nova(34113, dados, s)
     assert refs == 1  # só o H é string
-    assert '<c r="A34113" s="36"><v>200001</v></c>' in linha
-    assert '<c r="B34113" s="45" t="str"><v>118-A</v></c>' in linha
-    assert '<c r="V34113" s="43" t="str">' in linha
+    assert '<c r="A34113" s="54"><v>200001</v></c>' in linha
+    assert '<c r="B34113" s="55" t="str"><v>118-A</v></c>' in linha
+    assert '<c r="V34113" s="37" t="str">' in linha
     assert '<v>Comum</v>' in linha  # cache da V para remessa numérica
 
 
@@ -153,16 +160,17 @@ def test_editar_bd2_preserva_base_deduplica_e_insere():
     assert atualizacoes[0]["valores"] == ["9"] * 7
     assert mapeamento == {"Convênio ": "Convênio"}
     assert '<c r="C2" s="49"><v>9</v></c>' in xml   # upsert na linha 2
-    # todas as linhas da base preservadas
-    assert '<c r="A806" s="5"' in xml
-    assert '<c r="A808"' in xml
+    # todas as linhas da base preservadas (deslocadas +1 pela inserção)
+    assert '<c r="A807" s="5"' in xml    # a 806 original
+    assert '<c r="A809"' in xml          # a 808 original
     # coluna A normalizada: "Convênio " -> "Convênio" (si novo = índice 3)
     assert '<c r="A2" s="34" t="s"><v>3</v></c>' in xml
-    assert '<c r="A805" s="34" t="s"><v>3</v></c>' in xml
-    # linha nova começa em 809 (fim atual + 1), com a data em estilo mm-dd-yy
-    assert '<c r="A809" s="5" t="s"><v>3</v></c>' in xml
-    assert '<c r="B809" s="16"><v>45001</v></c>' in xml
-    assert '<c r="J809" s="17"><v>1</v></c>' in xml
+    assert '<c r="A806" s="34" t="s"><v>3</v></c>' in xml   # 805 deslocada +1
+    # linha nova entra na POSIÇÃO ordenada do bloco do seu ano (após a linha 2,
+    # única do ano 2023), com a data em estilo mm-dd-yy
+    assert '<c r="A3" s="5" t="s"><v>3</v></c>' in xml
+    assert '<c r="B3" s="16"><v>45001</v></c>' in xml
+    assert '<c r="J3" s="17"><v>1</v></c>' in xml
     # dimension
     assert 'ref="A1:J809"' in xml
     assert 'ref="A1:J808"' not in xml
@@ -284,6 +292,62 @@ def test_editar_bd2_quitacao_converte_string_de_espacos_em_numero():
     assert '<c r="G2" s="49" t="s"><v>3</v></c>' in xml
     assert atts[0]["valores"][2] == "10.69"       # E entra no upsert do record
     assert atts[0]["valores"][5] is None          # H fora
+
+
+def test_editar_bd2_novas_entram_ordenadas_no_bloco_do_ano():
+    """Linhas novas da BD2 entram na posição ordenada por (Convênio, Data)
+    dentro do bloco do MESMO ANO (estrutura da base: bloco 2024-2025 + bloco
+    2026); ano novo (maior que todos) vira bloco no fim. As rows existentes
+    são renumeradas e as novas registram _linha_final."""
+    s = ie._StringsCompartilhadas(_sst(["CAB", "A", "B", "C"]))
+    S24a = (date(2024, 1, 5) - ie.SERIAL_EPOCA).days
+    S24b = (date(2024, 1, 8) - ie.SERIAL_EPOCA).days
+    S25a = (date(2025, 1, 5) - ie.SERIAL_EPOCA).days
+    S25b = (date(2025, 1, 8) - ie.SERIAL_EPOCA).days
+    S26a = (date(2026, 1, 2) - ie.SERIAL_EPOCA).days
+    S26b = (date(2026, 1, 5) - ie.SERIAL_EPOCA).days
+    S26f = (date(2026, 2, 1) - ie.SERIAL_EPOCA).days
+    S26j = (date(2026, 1, 10) - ie.SERIAL_EPOCA).days
+    S27 = (date(2027, 1, 1) - ie.SERIAL_EPOCA).days
+
+    def row(n, conv_idx, serial, valor):
+        return (f'<row r="{n}"><c r="A{n}" s="5" t="s"><v>{conv_idx}</v></c>'
+                f'<c r="B{n}" s="16"><v>{serial}</v></c>'
+                f'<c r="C{n}" s="49"><v>{valor}</v></c></row>')
+
+    xml_base = (DECL
+                + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                + '<dimension ref="A1:J7"/>'
+                + '<sheetData>'
+                + '<row r="1"><c r="A1" t="s"><v>0</v></c></row>'
+                + row(2, 1, S24a, 1) + row(3, 2, S24b, 2)
+                + row(4, 1, S25a, 3) + row(5, 2, S25b, 4)
+                + row(6, 1, S26a, 5) + row(7, 2, S26b, 6)
+                + '</sheetData>'
+                + '</worksheet>')
+    xml, fim, nc, mapa, novas, atts = ie._editar_bd2(
+        xml_base,
+        [{"convenio": "A", "data": S26f, "valores": [7.0] * 7},
+         {"convenio": "B", "data": S26j, "valores": [8.0] * 7},
+         {"convenio": "C", "data": S27, "valores": [9.0] * 7}],
+        s)
+    assert fim == 10
+    linhas = re.findall(r'<row r="(\d+)">(.*?)</row>', xml, re.S)
+    assert [int(n) for n, _ in linhas] == list(range(1, 11))
+
+    def cel(corpo, col):
+        m = re.search(rf'<c r="{col}\d+"[^>]*>(.*?)</c>', corpo)
+        return m.group(1) if m else None
+
+    por_num = {int(n): corpo for n, corpo in linhas}
+    assert '<v>5</v>' in cel(por_num[6], "C")          # A 02/01 intacta
+    assert f'<v>{S26f}</v>' in cel(por_num[7], "B")    # nova A 01/02 na 7
+    assert '<v>7</v>' in cel(por_num[7], "C")
+    assert f'<v>{S26b}</v>' in cel(por_num[8], "B")    # B 05/01 deslocada p/ 8
+    assert f'<v>{S26j}</v>' in cel(por_num[9], "B")    # nova B 10/01 na 9
+    assert f'<v>{S27}</v>' in cel(por_num[10], "B")    # ano novo no fim
+    assert 'ref="A1:J10"' in xml
+    assert [n["_linha_final"] for n in novas] == [7, 9, 10]
 
 
 def test_editar_bd2_sem_mudanca_devolve_none():
@@ -754,17 +818,17 @@ def test_processamento_completo(tmp_path):
     assert len(linhas1) == 4
     assert linhas1[2][0] == 200001
     assert linhas1[3][0] == "200002 (R)"
-    # BD2: linha antiga preservada e normalizada + só as linhas novas do
-    # bloco anexadas no fim (dedupe-append — a base nunca é substituída)
+    # BD2: linha antiga preservada e normalizada + linhas novas entram na
+    # ordem do bloco do ano (Convênio Novo/Novo 2 antes de Convênio Z)
     bd2 = wb["BD2"]
     linhas2 = list(bd2.iter_rows(values_only=True))
     assert len(linhas2) == 4
-    assert linhas2[1][0] == "Convênio Z"
-    assert linhas2[2][0] == "Convênio Novo"
-    assert linhas2[2][1] == (date(2026, 9, 1) - ie.SERIAL_EPOCA).days
-    assert linhas2[2][9] == 1            # J=1
-    assert linhas2[3][0] == "Convênio Novo 2"
-    assert linhas2[3][9] == 1
+    assert linhas2[1][0] == "Convênio Novo"
+    assert linhas2[1][1] == (date(2026, 9, 1) - ie.SERIAL_EPOCA).days
+    assert linhas2[1][9] == 1            # J=1
+    assert linhas2[2][0] == "Convênio Novo 2"
+    assert linhas2[2][9] == 1
+    assert linhas2[3][0] == "Convênio Z"  # existente deslocada para o fim
 
     with zipfile.ZipFile(base) as zb, zipfile.ZipFile(final) as zf:
         # partes intocadas preservadas byte a byte
@@ -780,9 +844,9 @@ def test_processamento_completo(tmp_path):
         assert set(zf.namelist()) == set(zb.namelist())   # nenhuma parte criada/removida
         # fórmula da V com cache inline (openpyxl devolve a fórmula, não o cache)
         sheet5_final = zf.read("xl/worksheets/sheet5.xml").decode("utf-8")
-        assert ('<c r="V3" s="43" t="str"><f>=IF(RIGHT(A3,3)="(R)","Recurso","Comum")</f><v>Comum</v></c>'
+        assert ('<c r="V3" s="37" t="str"><f>=IF(RIGHT(A3,3)="(R)","Recurso","Comum")</f><v>Comum</v></c>'
                 in sheet5_final)
-        assert ('<c r="V4" s="43" t="str"><f>=IF(RIGHT(A4,3)="(R)","Recurso","Comum")</f><v>Recurso</v></c>'
+        assert ('<c r="V4" s="37" t="str"><f>=IF(RIGHT(A4,3)="(R)","Recurso","Comum")</f><v>Recurso</v></c>'
                 in sheet5_final)
 
         # ---- FASE 3c: caches regenerados (def1 = BD2, def2 = BD1) ----

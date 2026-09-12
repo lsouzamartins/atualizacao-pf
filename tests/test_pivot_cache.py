@@ -216,6 +216,22 @@ def test_atualizar_registro_converte_string_em_numero_quando_valor_novo():
     assert '<r><n v="50000"/><n v="10.69"/><n v="0"/></r>' in registros
 
 
+def test_inserir_registros_posiciona_no_meio():
+    """Linhas novas da BD2 entram ORDENADAS no meio do cache: inserir antes
+    do record de índice `posicao` (0-based)."""
+    cache = pc.CachePivot(_def([]), _records(['<n v="1"/>', '<n v="3"/>']))
+    cache.inserir_registros(1, ['<r><n v="2"/></r>'])
+    _, registros = cache.para_xml()
+    assert '<r><n v="1"/></r><r><n v="2"/></r><r><n v="3"/></r>' in registros
+    assert cache.n_registros == 3
+
+
+def test_inserir_registros_posicao_invalida_aborta():
+    cache = pc.CachePivot(_def([]), _records(['<n v="1"/>']))
+    with pytest.raises(RuntimeError, match="posição"):
+        cache.inserir_registros(5, ['<r><n v="2"/></r>'])
+
+
 def test_atualizar_registro_dois_records_candidatos_aborta_por_ambiguidade():
     cache = pc.CachePivot(_def([]), _records(
         ['<n v="1"/><n v="1"/>', '<n v="2"/><n v="2"/>', '<n v="2"/><n v="2"/>']))

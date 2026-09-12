@@ -273,22 +273,24 @@ def _converter_linha_wpd(linha) -> dict:
 
 
 def _linha_bd1_nova(num_linha: int, dados: dict, strings) -> tuple[str, int]:
-    """Uma <row> nova da BD1 com os estilos da última linha existente
-    (mapa de estilos da investigação) e fórmulas R–V sem grupo compartilhado.
-    Retorna (xml_da_linha, nº de células t="s" novas)."""
+    """Uma <row> nova da BD1 com os estilos DOMINANTES das linhas existentes
+    da base (A 54, B 55, C-F 57, F vazio 58, G/H 14, I-L/N 15, M/O 32,
+    P/Q 33, R-U 35, V 37) e fórmulas R–V sem grupo compartilhado. O mapa
+    antigo (36/45/46/38/39/41/43) trazia fundo amarelo em A/M/O e fonte
+    branca em B/P/Q. Retorna (xml_da_linha, nº de células t="s" novas)."""
     refs = 0
     remessa = dados["Remessa"]
     recurso = str(remessa).strip().endswith("(R)")
     if pd.api.types.is_number(remessa):
         numero = int(remessa) if float(remessa).is_integer() else float(remessa)
-        cel_a = _celula(f"A{num_linha}", 36, _numero(numero))
+        cel_a = _celula(f"A{num_linha}", 54, _numero(numero))
     else:
         refs += 1
-        cel_a = _celula(f"A{num_linha}", 36, str(strings.obter_indice(str(remessa))), tipo="s")
+        cel_a = _celula(f"A{num_linha}", 54, str(strings.obter_indice(str(remessa))), tipo="s")
     protocolo = dados["Protocolo"]
-    cel_b = (_celula(f"B{num_linha}", 45, protocolo, tipo="str")
+    cel_b = (_celula(f"B{num_linha}", 55, protocolo, tipo="str")
              if isinstance(protocolo, str)
-             else _celula(f"B{num_linha}", 45, _numero(protocolo)))
+             else _celula(f"B{num_linha}", 55, _numero(protocolo)))
     convenio = dados["Convênio"]
     refs += 1
     cel_h = _celula(f"H{num_linha}", 14,
@@ -298,10 +300,10 @@ def _linha_bd1_nova(num_linha: int, dados: dict, strings) -> tuple[str, int]:
         return None if v is None else (v - SERIAL_EPOCA).days
 
     cels = [cel_a, cel_b,
-            _celula(f"C{num_linha}", 46, _numero(data_serial(dados["Emissão"]))),
-            _celula(f"D{num_linha}", 46, _numero(data_serial(dados["Vencimento"]))),
-            _celula(f"E{num_linha}", 46, _numero(data_serial(dados["Entrega"]))),
-            _celula(f"F{num_linha}", 57 if dados["Baixa"] is None else 46,
+            _celula(f"C{num_linha}", 57, _numero(data_serial(dados["Emissão"]))),
+            _celula(f"D{num_linha}", 57, _numero(data_serial(dados["Vencimento"]))),
+            _celula(f"E{num_linha}", 57, _numero(data_serial(dados["Entrega"]))),
+            _celula(f"F{num_linha}", 58 if dados["Baixa"] is None else 57,
                     _numero(data_serial(dados["Baixa"]))),
             _celula(f"G{num_linha}", 14, None),
             cel_h,
@@ -309,20 +311,20 @@ def _linha_bd1_nova(num_linha: int, dados: dict, strings) -> tuple[str, int]:
             _celula(f"J{num_linha}", 15, _numero(dados["Valor Pago"])),
             _celula(f"K{num_linha}", 15, _numero(dados["Valor ISS"])),
             _celula(f"L{num_linha}", 15, _numero(dados["Vlr Guia"])),
-            _celula(f"M{num_linha}", 38, _numero(dados["% Pré-glosa"])),
+            _celula(f"M{num_linha}", 32, _numero(dados["% Pré-glosa"])),
             _celula(f"N{num_linha}", 15, _numero(dados["Valor Glosa"])),
-            _celula(f"O{num_linha}", 38, _numero(dados["% Glosa"])),
-            _celula(f"P{num_linha}", 39, _numero(dados["Atraso"])),
-            _celula(f"Q{num_linha}", 39, _numero(dados["Faturas"])),
-            _celula_formula(f"R{num_linha}", 41,
+            _celula(f"O{num_linha}", 32, _numero(dados["% Glosa"])),
+            _celula(f"P{num_linha}", 33, _numero(dados["Atraso"])),
+            _celula(f"Q{num_linha}", 33, _numero(dados["Faturas"])),
+            _celula_formula(f"R{num_linha}", 35,
                             f'=SUMIFS(L{num_linha},D{num_linha},"<"&TODAY(),F{num_linha},"")'),
-            _celula_formula(f"S{num_linha}", 41,
+            _celula_formula(f"S{num_linha}", 35,
                             f'=SUMIFS(L{num_linha},D{num_linha},">"&TODAY(),F{num_linha},"")'),
-            _celula_formula(f"T{num_linha}", 41,
+            _celula_formula(f"T{num_linha}", 35,
                             f'=IF(RIGHT(A{num_linha},3)="(R)",L{num_linha},0)'),
-            _celula_formula(f"U{num_linha}", 41,
+            _celula_formula(f"U{num_linha}", 35,
                             f'=IF(T{num_linha}=0,0,J{num_linha})'),
-            _celula_formula(f"V{num_linha}", 43,
+            _celula_formula(f"V{num_linha}", 37,
                             f'=IF(RIGHT(A{num_linha},3)="(R)","Recurso","Comum")',
                             valor_cache="Recurso" if recurso else "Comum", tipo="str"),
             ]
@@ -588,6 +590,16 @@ def _upsert_c_i(corpo: str, linha: int, novos: list) -> str:
     return corpo_novo + "".join(criadas)
 
 
+def _ano_do_serial(serial: str | None) -> int | None:
+    """Ano da data em serial do Excel (None para serial ausente/inválido)."""
+    if serial is None:
+        return None
+    try:
+        return (SERIAL_EPOCA + timedelta(days=int(float(serial)))).year
+    except (ValueError, OverflowError):
+        return None
+
+
 def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | None, int | None, int, dict, list, list]:
     """(1) normaliza a coluna A (tira o preenchimento de espaços,
     sincronizando sharedStrings); (2) UPSERT das linhas do bloco pela chave
@@ -707,12 +719,87 @@ def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | 
     novas_celulas = 0
     if novas:
         mudou = True
-        linhas = "".join(_linha_bd2(fim_atual + 1 + i, b["convenio"], b["data"],
-                                    b["valores"], strings)
-                         for i, b in enumerate(novas))
         novas_celulas = len(novas)
-        idx = texto.rfind("</sheetData>")
-        texto = texto[:idx] + linhas + texto[idx:]
+
+        # ---- posições de inserção: as linhas novas entram na ordem da base
+        # (bloco do ANO ordenado por (Convênio, Data), como o motor antigo);
+        # ano sem linhas entra antes do bloco do ano seguinte ou no fim ----
+        fisicas = sorted(((linha, chave[0], chave[1])
+                          for chave, (linha, _) in existentes.items()),
+                         key=lambda t: t[0])
+        novas_ord = sorted(novas, key=lambda b: (b["convenio"], str(b["data"])))
+        insercoes: list[tuple[int | None, dict]] = []  # (pos_apos, b)
+        for b in novas_ord:
+            chave = (b["convenio"], str(b["data"]))
+            ano = _ano_do_serial(str(b["data"]))
+            do_ano = [(linha, c, s) for linha, c, s in fisicas
+                      if _ano_do_serial(s) == ano]
+            pos: int | None
+            if do_ano:
+                pos = do_ano[-1][0]  # padrão: fim do bloco do ano
+                for i, (linha, c, s) in enumerate(do_ano):
+                    if (c, s) > chave:
+                        pos = do_ano[i - 1][0] if i > 0 else do_ano[0][0] - 1
+                        break
+            else:
+                maiores = [linha for linha, c, s in fisicas
+                           if (ano is None
+                               or (_ano_do_serial(s) is not None
+                                   and _ano_do_serial(s) > ano))]
+                pos = min(maiores) - 1 if maiores else None  # None = fim
+            insercoes.append((pos, b))
+
+        deslocs = sorted(p for p, _ in insercoes if p is not None)
+
+        def d(n):
+            return sum(1 for p in deslocs if p < n)
+
+        # 1) renumerar as rows existentes deslocadas pelas inserções
+        def _renum_row(m):
+            num = int(m.group(1))
+            k = d(num)
+            if k == 0:
+                return m.group(0)
+            corpo = re.sub(r' r="([A-Z]+)(\d+)"',
+                           lambda mm: f' r="{mm.group(1)}{int(mm.group(2)) + k}"',
+                           m.group(3))
+            return f'<row r="{num + k}"{m.group(2)}>{corpo}</row>'
+
+        texto = re.sub(r'<row r="(\d+)"([^>]*)>(.*?)</row>', _renum_row,
+                       texto, flags=re.DOTALL)
+
+        # 2) inserir as rows novas UMA A UMA (ordem do NI ordenado) — empates
+        # de posição entram em sequência; a âncora desloca com as já aplicadas
+        for i, (pos, b) in enumerate(insercoes):
+            if pos is None:
+                final = fim_atual + 1 + len(deslocs)
+            else:
+                # d(pos) já desloca a âncora por TODAS as inserções anteriores;
+                # só os EMPATES exatos aplicados antes deslocam além disso
+                alvo = (pos + d(pos)
+                        + sum(1 for pj, _ in insercoes[:i] if pj == pos))
+                final = alvo + 1
+            row_xml = _linha_bd2(final, b["convenio"], b["data"],
+                                 b["valores"], strings)
+            if pos is None:
+                idx = texto.rfind("</sheetData>")
+                texto = texto[:idx] + row_xml + texto[idx:]
+            else:
+                m = re.search(rf'<row r="{alvo}"[^>]*>.*?</row>',
+                              texto, flags=re.DOTALL)
+                if not m:
+                    raise RuntimeError(
+                        f"inserção BD2: âncora da row {alvo} não localizada")
+                texto = texto[:m.end()] + row_xml + texto[m.end():]
+            b["_linha_final"] = final
+            # posição do record no cache (NÃO renumerado): imediatamente após
+            # o record da linha-âncora (linha pos -> record pos-2)
+            b["_record_pos"] = pos - 1 if pos is not None else None
+
+        # 3) as atualizações (upsert) acompanham a renumeração
+        for att in atualizacoes:
+            att["linha"] = att["linha"] + d(att["linha"])
+            att["record"] = att["linha"] - 2
         novo_fim = fim_atual + len(novas)
     else:
         novo_fim = fim_atual
@@ -953,12 +1040,20 @@ def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
     if fim_bd2_novo is not None:
         if mapeamento_bd2:
             cache_bd2.substituir_strings("Convênio", mapeamento_bd2)
+        if novas_bd2:
+            # records novos entram imediatamente após o record da linha-âncora
+            # (o cache não é renumerado — posição = pos_apos - 1), em ordem
+            # decrescente para não deslocar as posições já calculadas; ANTES
+            # do upsert, porque os índices das atualizações já são os finais
+            for b in sorted(novas_bd2, key=lambda x: -x["_linha_final"]):
+                pos = (b["_record_pos"]
+                       if b["_record_pos"] is not None
+                       else cache_bd2.n_registros)
+                cache_bd2.inserir_registros(pos, [_record_bd2(b, cache_bd2)])
         if atualizacoes_bd2:
             for att in atualizacoes_bd2:
                 cache_bd2.atualizar_registro(att["record"], att["valores"],
                                              att["valores_antigos"])
-        if novas_bd2:
-            cache_bd2.anexar_registros([_record_bd2(b, cache_bd2) for b in novas_bd2])
 
     # -- timeline "Entrega" e slicer "Tipo de remessa": PRESERVADOS do arquivo
     # do usuário — sem a janela do mês de fechamento e sem a restrição "só
