@@ -28,6 +28,14 @@ def test_login_css_nao_cita_o_hospital():
     assert "Hias" not in ui_comum.LOGIN_CSS
 
 
+def test_login_css_cartao_quadrado_no_tamanho_do_eps():
+    """Cartão no tamanho do 6719.eps (288pt ≈ 384px), com conteúdo compacto."""
+    css = ui_comum.LOGIN_CSS
+    assert "width: 384px" in css      # cartão quadrado no tamanho do EPS
+    assert "width: 72px" in css       # avatar reduzido para caber no quadrado
+    assert "min-height: 38px" in css  # campos mais compactos
+
+
 def test_nenhum_logo_do_hospital_na_interface():
     """Sistema particular: nada de logotipos do hospital na UI do app."""
     with open(ui_comum.__file__, encoding="utf-8") as f:

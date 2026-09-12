@@ -211,48 +211,49 @@ LOGIN_CSS = """
     /* Área do formulário: centralizada vertical e horizontalmente */
     div[data-testid="stHorizontalBlock"] { min-height: calc(100vh - 9rem); align-items: center; }
 
-    /* Cartão branco */
+    /* Cartão branco — quadrado compacto no tamanho do 6719.eps (288pt ≈ 384px) */
     .login-card { background: #FFFFFF; border-radius: 18px; box-shadow: 0 24px 60px rgba(0, 0, 0, .35);
-                  padding: 2.6rem 2.4rem 2.2rem 2.4rem; max-width: 430px; margin: 0 auto; }
-    .login-card-titulo { font-size: 1.55rem; font-weight: 800; color: #131A3D; margin-bottom: .25rem; }
-    .login-card-sub { font-size: .86rem; color: #64748B; margin-bottom: 1.7rem; }
+                  padding: 1.5rem 1.7rem 1.2rem 1.7rem; width: 384px; min-height: 384px;
+                  max-width: calc(100vw - 32px); margin: 0 auto; box-sizing: border-box; }
+    .login-card-titulo { font-size: 1.2rem; font-weight: 800; color: #131A3D; margin-bottom: .15rem; }
+    .login-card-sub { font-size: .76rem; color: #64748B; margin-bottom: .9rem; }
 
     /* Avatar no cartão de login: foto do usuário (tamanho fixo, sem distorção)
-       ou círculo padrão com a inicial */
-    .login-avatar { display: block; width: 120px; height: 120px; margin: 0 auto 1.4rem auto;
-                    border-radius: 50%; object-fit: cover; border: 4px solid #E2E8F0;
+       ou círculo padrão com a inicial — reduzido para caber no quadrado */
+    .login-avatar { display: block; width: 72px; height: 72px; margin: 0 auto .8rem auto;
+                    border-radius: 50%; object-fit: cover; border: 3px solid #E2E8F0;
                     background: #F8FAFC; }
     .login-avatar-padrao { display: flex; align-items: center; justify-content: center;
-                           width: 120px; height: 120px; margin: 0 auto 1.4rem auto;
-                           border-radius: 50%; border: 4px solid #E2E8F0;
+                           width: 72px; height: 72px; margin: 0 auto .8rem auto;
+                           border-radius: 50%; border: 3px solid #E2E8F0;
                            background: linear-gradient(135deg, #4D7CFE 0%, #3153E8 100%);
-                           color: #FFFFFF; font-size: 2.4rem; font-weight: 800; }
-    .login-avatar-padrao svg { margin: 0; }
+                           color: #FFFFFF; font-size: 1.5rem; font-weight: 800; }
+    .login-avatar-padrao svg { margin: 0; width: 28px; height: 28px; }
 
-    /* Campos com ícones (usuário / cadeado) */
-    .login-card div[data-testid="stTextInput"] { margin-bottom: .85rem; }
+    /* Campos com ícones (usuário / cadeado) — compactos para o quadrado */
+    .login-card div[data-testid="stTextInput"] { margin-bottom: .55rem; }
     .login-card div[data-testid="stTextInput"] input {
-        border: 1px solid #E2E8F0 !important; border-radius: 12px !important;
-        background: #F8FAFC !important; padding: .68rem .9rem .68rem 2.7rem !important;
-        font-size: .95rem !important; color: #131A3D !important; min-height: 48px;
+        border: 1px solid #E2E8F0 !important; border-radius: 10px !important;
+        background: #F8FAFC !important; padding: .4rem .8rem .4rem 2.3rem !important;
+        font-size: .9rem !important; color: #131A3D !important; min-height: 38px;
     }
     .login-card div[data-testid="stTextInput"] input:focus {
         border-color: #4D7CFE !important; box-shadow: 0 0 0 3px rgba(77, 124, 254, .18) !important;
     }
     .login-card div[data-testid="stTextInput"]:has(+ div[data-testid="stTextInput"]) input {
-        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3C/svg%3E") !important;
-        background-repeat: no-repeat !important; background-position: .85rem center !important; background-size: 18px !important;
+        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3C/svg%3E") !important;
+        background-repeat: no-repeat !important; background-position: .75rem center !important; background-size: 16px !important;
     }
     .login-card div[data-testid="stTextInput"] + div[data-testid="stTextInput"] input {
-        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='11' x='3' y='11' rx='2' ry='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 10 0v4'/%3E%3C/svg%3E") !important;
-        background-repeat: no-repeat !important; background-position: .85rem center !important; background-size: 18px !important;
+        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='11' x='3' y='11' rx='2' ry='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 10 0v4'/%3E%3C/svg%3E") !important;
+        background-repeat: no-repeat !important; background-position: .75rem center !important; background-size: 16px !important;
     }
 
-    /* Botão Entrar */
+    /* Botão Entrar — compacto */
     .login-card div.stButton > button[kind="primary"] {
         background: linear-gradient(90deg, #4D7CFE 0%, #3153E8 100%) !important;
-        border: none !important; border-radius: 12px !important;
-        padding: .8rem 1rem !important; font-weight: 700 !important; font-size: .98rem !important;
+        border: none !important; border-radius: 10px !important;
+        padding: .55rem 1rem !important; font-weight: 700 !important; font-size: .92rem !important;
         color: #FFFFFF !important; width: 100%; transition: filter .2s ease !important;
     }
     .login-card div.stButton > button[kind="primary"]:hover { filter: brightness(1.1); }
@@ -262,17 +263,17 @@ LOGIN_CSS = """
     .login-card [data-testid="stAlert"] { border-radius: 10px; }
 
     /* Checkbox 'Lembrar de mim' */
-    .login-card div[data-testid="stCheckbox"] { margin: .1rem 0 .9rem 0; }
-    .login-card div[data-testid="stCheckbox"] label p { color: #64748B; font-size: .88rem; }
+    .login-card div[data-testid="stCheckbox"] { margin: 0 0 .55rem 0; }
+    .login-card div[data-testid="stCheckbox"] label p { color: #64748B; font-size: .8rem; }
 
     /* Link 'Esqueceu a senha?' (botão terciário centralizado) */
     .login-card div[data-testid="stButton"]:has(button[kind="tertiary"]) {
-        text-align: center; margin-top: 1.1rem;
+        text-align: center; margin-top: .6rem;
     }
     .login-card div.stButton > button[kind="tertiary"] {
         background: transparent !important; border: none !important; box-shadow: none !important;
-        color: #4D7CFE !important; font-size: .88rem !important; font-weight: 600 !important;
-        padding: .2rem .5rem !important;
+        color: #4D7CFE !important; font-size: .8rem !important; font-weight: 600 !important;
+        padding: .1rem .4rem !important;
     }
     .login-card div.stButton > button[kind="tertiary"]:hover {
         color: #3153E8 !important; text-decoration: underline !important;
