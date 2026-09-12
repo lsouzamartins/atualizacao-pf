@@ -184,12 +184,13 @@ def _normalizar_remessa(valor) -> str:
 def identificar_linhas_novas_bd1(df_wpd: pd.DataFrame, remessas_existentes: set) -> pd.DataFrame:
     """
     Retorna as linhas do WPD cuja Remessa ainda não existe na BD1,
-    ordenadas por Emissão (para anexar ao fim mantendo a ordem histórica).
+    agrupadas por Convênio (como o WPD e a base — o sort por Emissão
+    misturava os convênios), preservando a ordem do WPD dentro do grupo.
     """
     df = df_wpd.copy()
     df["Remessa"] = df["Remessa"].map(_normalizar_remessa)
     novas = df[~df["Remessa"].isin(remessas_existentes)].copy()
-    return novas.sort_values("Emissão").reset_index(drop=True)
+    return novas.sort_values("Convênio", kind="stable").reset_index(drop=True)
 
 
 def _linhas_novas_originais(df_wpd: pd.DataFrame, remessas_existentes: set) -> pd.DataFrame:
@@ -198,7 +199,7 @@ def _linhas_novas_originais(df_wpd: pd.DataFrame, remessas_existentes: set) -> p
     df = df_wpd.copy()
     df["__rem_norm"] = df["Remessa"].map(_normalizar_remessa)
     novas = df[~df["__rem_norm"].isin(remessas_existentes)].copy()
-    novas = novas.sort_values("Emissão").reset_index(drop=True)
+    novas = novas.sort_values("Convênio", kind="stable").reset_index(drop=True)
     return novas.drop(columns=["__rem_norm"])
 
 
@@ -816,7 +817,8 @@ def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | 
 # Ajustes das partes auxiliares
 # ==============================================================================
 def _ajustar_tabela(xml: str, prefixo: str, novo_fim: int) -> str:
-    """Atualiza ref/autoFilter de uma tabela (table1.xml: 'A1:V'; table2.xml: 'A1:I')."""
+    """Atualiza ref/autoFilter de uma tabela (table1.xml: 'A1:V'; table2.xml:
+    'A1:J' — a tabela real da BD2 inclui a coluna J/FLAG)."""
     return re.sub(rf'ref="{re.escape(prefixo)}(\d+)"',
                   lambda m: f'ref="{prefixo}{novo_fim}"', xml)
 
@@ -1246,7 +1248,7 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
             substituicoes["xl/worksheets/sheet6.xml"] = xml_bd2
             novas_celulas += refs
             substituicoes["xl/tables/table2.xml"] = _ajustar_tabela(
-                partes["xl/tables/table2.xml"], "A1:I", fim_bd2_novo)
+                partes["xl/tables/table2.xml"], "A1:J", fim_bd2_novo)
             parte_cache_bd2 = _parte_cache_bd2(partes)
             if parte_cache_bd2 is None:
                 raise RuntimeError(

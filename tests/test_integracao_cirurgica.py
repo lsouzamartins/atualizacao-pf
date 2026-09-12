@@ -37,9 +37,29 @@ def test_normalizar_remessa_formas():
 
 def test_identificar_linhas_novas_bd1():
     df = pd.DataFrame({"Remessa": [117129.0, "200002 (R)", 200003],
+                       "Convênio": ["AMIL", "BRADESCO", "BRADESCO"],
                        "Emissão": [pd.Timestamp("2026-08-31")] * 3})
     novas = ie.identificar_linhas_novas_bd1(df, {"117129"})
     assert list(novas["Remessa"]) == ["200002 (R)", "200003"]
+
+
+def test_linhas_novas_bd1_agrupadas_por_convenio():
+    """As linhas novas da BD1 entram AGRUPADAS por convênio (como o WPD e a
+    base) — o sort por Emissão misturava os convênios (defeito de 11/09:
+    LEVE SAUDE intercalada com os demais)."""
+    df = pd.DataFrame({
+        "Remessa": [1.0, 2.0, 3.0, 4.0],
+        "Convênio": ["LEVE SAUDE", "AMIL", "LEVE SAUDE", "AMIL"],
+        "Emissão": [pd.Timestamp("2026-09-01"), pd.Timestamp("2026-09-09"),
+                    pd.Timestamp("2026-09-02"), pd.Timestamp("2026-09-10")],
+    })
+    novas = ie._linhas_novas_originais(df, set())
+    assert list(novas["Convênio"]) == ["AMIL", "AMIL", "LEVE SAUDE", "LEVE SAUDE"]
+    # dentro do convênio, a ordem original do WPD é preservada (sort estável)
+    assert list(novas["Emissão"]) == [pd.Timestamp("2026-09-09"),
+                                      pd.Timestamp("2026-09-10"),
+                                      pd.Timestamp("2026-09-01"),
+                                      pd.Timestamp("2026-09-02")]
 
 
 # ==============================================================================
@@ -399,6 +419,13 @@ def test_ajustar_tabela_atualiza_refs():
            + 'totalsRowShown="0"><autoFilter ref="A1:V34111"/></table>')
     saida = ie._ajustar_tabela(xml, "A1:V", 34250)
     assert saida.count('ref="A1:V34250"') == 2
+    # a tabela REAL da BD2 cobre A1:J (a coluna J/FLAG entra na tabela)
+    xml_bd2 = (DECL
+               + '<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+               + 'id="1" name="Tabela1" displayName="Tabela1" ref="A1:J1075" '
+               + 'totalsRowShown="0"><autoFilter ref="A1:J1075"/></table>')
+    saida_bd2 = ie._ajustar_tabela(xml_bd2, "A1:J", 1078)
+    assert saida_bd2.count('ref="A1:J1078"') == 2
 
 
 # ==============================================================================
@@ -529,8 +556,8 @@ def _criar_base(tmp_path, sem_dimension_bd2=False):
                 + 'showLastColumn="0" showRowStripes="1" showColumnStripes="0"/></table>')
 
     table1 = tabela(1, "BD_1", "A1:V2", cabecalho_bd1)
-    # no arquivo real a tabela da BD2 cobre só A1:I (a coluna J/FLAG fica fora)
-    table2 = tabela(2, "Tabela1", "A1:I2", cabecalho_bd2[:9])
+    # no arquivo real a tabela da BD2 cobre A1:J (a coluna J/FLAG entra)
+    table2 = tabela(2, "Tabela1", "A1:J2", cabecalho_bd2[:9])
 
     # pivôs com pivotFields posicionais e refreshOnLoad="1" (estado do template
     # da nuvem — a FASE 3c remove); cacheIds da investigação: pivôs 1–3 = 1
@@ -836,7 +863,7 @@ def test_processamento_completo(tmp_path):
         assert zb.read("customXml/item1.xml") == zf.read("customXml/item1.xml")
         assert zb.read("xl/slicers/slicer1.xml") == zf.read("xl/slicers/slicer1.xml")
         assert 'ref="A1:V4"' in zf.read("xl/tables/table1.xml").decode("utf-8")
-        assert 'ref="A1:I4"' in zf.read("xl/tables/table2.xml").decode("utf-8")
+        assert 'ref="A1:J4"' in zf.read("xl/tables/table2.xml").decode("utf-8")
         assert 'fullCalcOnLoad="1"' in zf.read("xl/workbook.xml").decode("utf-8")
         assert "'BD1'!$A$1:$V$4" in zf.read("xl/workbook.xml").decode("utf-8")
         assert 'A1:V4' in zf.read("xl/worksheets/sheet5.xml").decode("utf-8")
@@ -956,7 +983,7 @@ def test_limpo_none_integra_so_bd1(tmp_path):
             assert "refreshOnLoad" not in zf.read(
                 f"xl/pivotTables/pivotTable{i}.xml").decode("utf-8")
         # tabelas da BD2 sem alteração; a da BD1 cresceu
-        assert 'ref="A1:I2"' in zf.read("xl/tables/table2.xml").decode("utf-8")
+        assert 'ref="A1:J2"' in zf.read("xl/tables/table2.xml").decode("utf-8")
         assert 'ref="A1:V4"' in zf.read("xl/tables/table1.xml").decode("utf-8")
 
 
