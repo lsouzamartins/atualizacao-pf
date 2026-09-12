@@ -211,86 +211,89 @@ LOGIN_CSS = """
     /* Área do formulário: centralizada vertical e horizontalmente */
     div[data-testid="stHorizontalBlock"] { min-height: calc(100vh - 9rem); align-items: center; }
 
-    /* Cartão branco — quadrado de 480px (maior que o 6719.eps, 288pt ≈ 384px,
-       a pedido do usuário). É o st.container(border=True) de exigir_login: o
-       único wrapper que realmente envolve os widgets (div aberta/fechada em
-       markdowns separados renderizava vazia — era o quadrado branco sem o
-       formulário). */
-    div[data-testid="stVerticalBlockBorderWrapper"] {
+    /* Cartão branco — quadrado de 440px (a pedido do usuário: um pouco menor
+       que os 480px). O st.container(border=True) de exigir_login renderiza,
+       no Streamlit 1.60, stColumn > stLayoutWrapper > stVerticalBlock (a
+       borda/padding padrão ficam no bloco interno; o testid
+       stVerticalBlockBorderWrapper é de versões mais novas e NÃO existe aqui).
+       Div aberta/fechada em markdowns separados também não aninha — era o
+       quadrado branco fantasma sem formulário. */
+    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] {
+        width: 440px; max-width: calc(100vw - 32px); margin: 0 auto;
+    }
+    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
         background: #FFFFFF; border: none; border-radius: 18px;
         box-shadow: 0 24px 60px rgba(0, 0, 0, .35);
-        padding: 1.7rem 1.9rem 1.4rem 1.9rem; width: 480px; min-height: 480px;
-        max-width: calc(100vw - 32px); margin: 0 auto; box-sizing: border-box;
+        padding: 1.5rem 1.7rem 1.2rem 1.7rem; min-height: 440px;
+        box-sizing: border-box; gap: .35rem;
     }
-    div[data-testid="stVerticalBlockBorderWrapper"] > div[data-testid="stVerticalBlock"] {
-        gap: .4rem;
-    }
-    .login-card-titulo { font-size: 1.35rem; font-weight: 800; color: #131A3D; margin-bottom: .15rem; }
-    .login-card-sub { font-size: .85rem; color: #64748B; margin-bottom: .9rem; }
+    .login-card-titulo { font-size: 1.3rem; font-weight: 800; color: #131A3D; margin-bottom: .15rem; }
 
     /* Avatar no cartão de login: foto do usuário (tamanho fixo, sem distorção)
-       ou círculo padrão com a inicial — proporcional ao quadrado de 480px */
-    .login-avatar { display: block; width: 84px; height: 84px; margin: 0 auto .9rem auto;
+       ou círculo padrão com a inicial — proporcional ao quadrado de 440px */
+    .login-avatar { display: block; width: 80px; height: 80px; margin: 0 auto .8rem auto;
                     border-radius: 50%; object-fit: cover; border: 3px solid #E2E8F0;
                     background: #F8FAFC; }
     .login-avatar-padrao { display: flex; align-items: center; justify-content: center;
-                           width: 84px; height: 84px; margin: 0 auto .9rem auto;
+                           width: 80px; height: 80px; margin: 0 auto .8rem auto;
                            border-radius: 50%; border: 3px solid #E2E8F0;
                            background: linear-gradient(135deg, #4D7CFE 0%, #3153E8 100%);
-                           color: #FFFFFF; font-size: 1.7rem; font-weight: 800; }
-    .login-avatar-padrao svg { margin: 0; width: 34px; height: 34px; }
+                           color: #FFFFFF; font-size: 1.6rem; font-weight: 800; }
+    .login-avatar-padrao svg { margin: 0; width: 32px; height: 32px; }
 
     /* Campos com ícones (usuário / cadeado) — compactos para o quadrado.
        Login renderiza <input type="text"> e Senha, type="password": atributo
        distingue de forma robusta (seletor de irmãos falharia — cada widget
        vive no próprio stElement). */
-    div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stTextInput"] {
-        margin-bottom: .55rem;
+    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] div[data-testid="stTextInput"] {
+        margin-bottom: .5rem;
     }
-    div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stTextInput"] input {
+    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] div[data-testid="stTextInput"] input {
         border: 1px solid #E2E8F0 !important; border-radius: 10px !important;
-        background: #F8FAFC !important; padding: .5rem .9rem .5rem 2.6rem !important;
-        font-size: 1rem !important; color: #131A3D !important; min-height: 42px;
+        background: #F8FAFC !important; padding: .45rem .85rem .45rem 2.4rem !important;
+        font-size: .95rem !important; color: #131A3D !important; min-height: 40px;
     }
-    div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stTextInput"] input:focus {
+    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] div[data-testid="stTextInput"] input:focus {
         border-color: #4D7CFE !important; box-shadow: 0 0 0 3px rgba(77, 124, 254, .18) !important;
     }
-    div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stTextInput"] input:not([type="password"]) {
+    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] div[data-testid="stTextInput"] input:not([type="password"]) {
         background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3C/svg%3E") !important;
-        background-repeat: no-repeat !important; background-position: .85rem center !important; background-size: 18px !important;
+        background-repeat: no-repeat !important; background-position: .8rem center !important; background-size: 16px !important;
     }
-    div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stTextInput"] input[type="password"] {
+    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] div[data-testid="stTextInput"] input[type="password"] {
         background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='11' x='3' y='11' rx='2' ry='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 10 0v4'/%3E%3C/svg%3E") !important;
-        background-repeat: no-repeat !important; background-position: .85rem center !important; background-size: 18px !important;
+        background-repeat: no-repeat !important; background-position: .8rem center !important; background-size: 16px !important;
     }
 
     /* Botão Entrar — compacto */
-    div[data-testid="stVerticalBlockBorderWrapper"] div.stButton > button[kind="primary"] {
+    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] [data-testid="stButton"] > button[kind="primary"] {
         background: linear-gradient(90deg, #4D7CFE 0%, #3153E8 100%) !important;
         border: none !important; border-radius: 10px !important;
-        padding: .65rem 1rem !important; font-weight: 700 !important; font-size: 1rem !important;
+        padding: .6rem 1rem !important; font-weight: 700 !important; font-size: .95rem !important;
         color: #FFFFFF !important; width: 100%; transition: filter .2s ease !important;
     }
-    div[data-testid="stVerticalBlockBorderWrapper"] div.stButton > button[kind="primary"]:hover { filter: brightness(1.1); }
-    div[data-testid="stVerticalBlockBorderWrapper"] div.stButton > button[kind="primary"]:disabled { background: #CBD5E1 !important; }
+    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] [data-testid="stButton"] > button[kind="primary"]:hover { filter: brightness(1.1); }
+    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] [data-testid="stButton"] > button[kind="primary"]:disabled { background: #CBD5E1 !important; }
 
     /* Mensagens de erro dentro do cartão */
-    div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stAlert"] { border-radius: 10px; }
+    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] [data-testid="stAlert"] { border-radius: 10px; }
 
-    /* Checkbox 'Lembrar de mim' */
-    div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stCheckbox"] { margin: 0 0 .55rem 0; }
-    div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stCheckbox"] label p { color: #64748B; font-size: .9rem; }
+    /* Checkbox 'Lembrar de mim' — texto sempre visível sobre o cartão branco */
+    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] div[data-testid="stCheckbox"] { margin: 0 0 .5rem 0; }
+    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] div[data-testid="stCheckbox"] label p {
+        color: #64748B !important; font-size: .85rem !important;
+    }
 
     /* Link 'Esqueceu a senha?' (botão terciário centralizado) */
-    div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stButton"]:has(button[kind="tertiary"]) {
-        text-align: center; margin-top: .6rem;
+    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] [data-testid="stButton"]:has(button[kind="tertiary"]) {
+        text-align: center; margin-top: .5rem;
     }
-    div[data-testid="stVerticalBlockBorderWrapper"] div.stButton > button[kind="tertiary"] {
+    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] [data-testid="stButton"] > button[kind="tertiary"] {
         background: transparent !important; border: none !important; box-shadow: none !important;
-        color: #4D7CFE !important; font-size: .9rem !important; font-weight: 600 !important;
+        color: #4D7CFE !important; font-size: .85rem !important; font-weight: 600 !important;
         padding: .1rem .4rem !important;
     }
-    div[data-testid="stVerticalBlockBorderWrapper"] div.stButton > button[kind="tertiary"]:hover {
+    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] [data-testid="stButton"] > button[kind="tertiary"]:hover {
         color: #3153E8 !important; text-decoration: underline !important;
     }
 </style>

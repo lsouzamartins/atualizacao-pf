@@ -116,8 +116,7 @@ def exigir_login():
         # div[data-testid="stVerticalBlockBorderWrapper"].
         with st.container(border=True):
             st.markdown(
-                '<div class="login-card-titulo">Acesso ao sistema</div>'
-                '<div class="login-card-sub">Entre com suas credenciais para continuar.</div>',
+                '<div class="login-card-titulo">Acesso ao sistema</div>',
                 unsafe_allow_html=True,
             )
             # Avatar do usuário digitado: foto cadastrada, inicial ou ícone padrão.
