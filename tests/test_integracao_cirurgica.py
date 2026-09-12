@@ -126,6 +126,79 @@ def test_linha_bd1_formulas_e_cache_da_coluna_v():
             in linha)
 
 
+def test_editar_bd1_insere_novas_junto_do_convenio():
+    """As remessas novas da BD1 entram na POSIÇÃO alfabética do convênio
+    (junto das remessas do mesmo convênio, como a base); as rows existentes
+    deslocadas são renumeradas — refs E fórmulas R–V acompanham."""
+    s = ie._StringsCompartilhadas(_sst(["CAB", "AMIL", "GEAP"]))
+    SER_2026 = (date(2026, 1, 2) - ie.SERIAL_EPOCA).days
+
+    def row_base(n, conv_idx):
+        return (f'<row r="{n}"><c r="A{n}"><v>{n}</v></c>'
+                f'<c r="B{n}" s="55"><v>1</v></c>'
+                f'<c r="C{n}" s="57"><v>{SER_2026}</v></c>'
+                f'<c r="H{n}" s="14" t="s"><v>{conv_idx}</v></c>')
+
+    # como o arquivo real: a linha 2 é o MESTRE dos grupos compartilhados
+    # R–V (si=1..5) e a linha 3 tem os membros (self-closing)
+    row2 = (row_base(2, 1)
+            + '<c r="R2" s="35"><f t="shared" ref="R2:R3" si="1">SUMIFS(L2,D2,"&lt;"&amp;TODAY(),F2,"")</f><v>1</v></c>'
+            + '<c r="S2" s="35"><f t="shared" ref="S2:S3" si="2">SUMIFS(L2,D2,"&gt;"&amp;TODAY(),F2,"")</f><v>0</v></c>'
+            + '<c r="T2" s="35"><f t="shared" ref="T2:T3" si="3">IF(RIGHT(A2,3)="(R)",L2,0)</f><v>1</v></c>'
+            + '<c r="U2" s="35"><f t="shared" ref="U2:U3" si="4">IF(T2=0,0,J2)</f><v>0</v></c>'
+            + '<c r="V2" s="37" t="str"><f t="shared" ref="V2:V3" si="5">IF(RIGHT(A2,3)="(R)","Recurso","Comum")</f><v>Comum</v></c></row>')
+    row3 = (row_base(3, 2)
+            + '<c r="R3" s="35"><f t="shared" si="1"/><v>1</v></c>'
+            + '<c r="S3" s="35"><f t="shared" si="2"/><v>0</v></c>'
+            + '<c r="T3" s="35"><f t="shared" si="3"/><v>1</v></c>'
+            + '<c r="U3" s="35"><f t="shared" si="4"/><v>0</v></c>'
+            + '<c r="V3" s="37" t="str"><f t="shared" si="5"/><v>Comum</v></c></row>')
+
+    xml = (DECL
+           + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+           + '<dimension ref="A1:V3"/>'
+           + '<sheetData>'
+           + '<row r="1"><c r="A1" t="s"><v>0</v></c></row>'
+           + row2 + row3   # AMIL (2), GEAP (3)
+           + '</sheetData>'
+           + '</worksheet>')
+    novas = pd.DataFrame({
+        "Remessa": [101, 102], "Protocolo": [1, 2],
+        "Emissão": [datetime(2026, 1, 1)] * 2,
+        "Vencimento": [datetime(2026, 2, 1)] * 2,
+        "Entrega": [None] * 2, "Baixa": [None] * 2,
+        "Nota Fiscal": [None] * 2, "Convênio": ["AMIL", "AMIL"],
+        "Faturado": [10.0] * 2, "Valor Pago": [10.0] * 2, "Valor ISS": [0.0] * 2,
+        "Vlr Guia": [10.0] * 2, "% Pré-glosa": [0.0] * 2, "Valor Glosa": [0.0] * 2,
+        "% Glosa": [0.0] * 2, "Atraso": [0.0] * 2, "Faturas": [1.0] * 2,
+    })
+    resultado = ie._editar_bd1(xml, novas, s)
+    assert resultado is not None
+    xml_novo, fim, refs, posicoes = resultado
+    assert fim == 5
+    linhas = re.findall(r'<row r="(\d+)">(.*?)</row>', xml_novo, re.S)
+    assert [int(n) for n, _ in linhas] == [1, 2, 3, 4, 5]
+    por_num = {int(n): corpo for n, corpo in linhas}
+    assert '<c r="H2" s="14" t="s"><v>1</v></c>' in por_num[2]   # AMIL antiga
+    assert '<c r="H3" s="14" t="s"><v>1</v></c>' in por_num[3]   # nova AMIL
+    assert '<c r="H4" s="14" t="s"><v>1</v></c>' in por_num[4]   # nova AMIL
+    assert '<c r="H5" s="14" t="s"><v>2</v></c>' in por_num[5]   # GEAP deslocada
+    # fórmulas da GEAP MATERIALIZADAS (os grupos compartilhados foram
+    # convertidos) e renumeradas de 3 para 5
+    assert 't="shared"' not in por_num[5]
+    assert 'SUMIFS(L5,D5' in por_num[5]
+    assert 'IF(RIGHT(A5,3)' in por_num[5]
+    assert 'IF(T5=0,0,J5)' in por_num[5]
+    assert '<c r="R5"' in por_num[5]
+    assert '<v>Comum</v>' in por_num[5]
+    # as fórmulas da AMIL antiga (linha 2, não deslocada) também materializadas
+    assert 't="shared"' not in por_num[2]
+    assert 'SUMIFS(L2,D2' in por_num[2]
+    # records: ambas as novas após o record da linha 2 (posição 1)
+    assert posicoes[0][0] == 1 and posicoes[1][0] == 1
+    assert 'ref="A1:V5"' in xml_novo
+
+
 def test_linha_bd1_remessa_numerica_sem_string():
     s = ie._StringsCompartilhadas(_sst(["HOSPITAL ABC"]))
     dados = {"Remessa": 200001, "Protocolo": "118-A",  # protocolo string vira t="str"

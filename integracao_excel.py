@@ -332,26 +332,175 @@ def _linha_bd1_nova(num_linha: int, dados: dict, strings) -> tuple[str, int]:
     return f'<row r="{num_linha}">{"".join(cels)}</row>', refs
 
 
-def _editar_bd1(xml_bd1: str, novas: pd.DataFrame, strings) -> tuple[str, int, int] | None:
-    """Anexa as remessas novas antes de </sheetData> e atualiza a dimension.
-    Retorna (xml_novo, fim_novo, células t="s" novas) ou None se nada mudou."""
+# ATENÇÃO: a alternativa self-closing (`<f .../>`) precisa vir ANTES — senão
+# o padrão `<f ...>(.*?)</f>` trata o `/>` como atributo e o `(.*?)` engole
+# as células seguintes até o próximo `</f>`.
+_RE_F_SHARED = re.compile(r'<f( [^>]*)?/>|<f( [^>]*)?>(.*?)</f>')
+
+
+def _materializar_shared(texto: str) -> str:
+    """Transforma as fórmulas COMPARTILHADAS (t="shared" si=...) em fórmulas
+    normais com texto completo. As linhas históricas da BD1 têm os grupos
+    R–V compartilhados; inserir rows no meio PARTIRIA os grupos (o mestre tem
+    ref="R...:R..." e os membros só o si) e o Excel REJEITA o arquivo."""
+    masters: dict[int, tuple[int, str]] = {}
+
+    def _row(m):
+        num = int(m.group(1))
+        corpo = m.group(3)
+
+        def _f2(fm):
+            attrs = fm.group(1) or fm.group(2) or ""
+            if 't="shared"' not in attrs:
+                return fm.group(0)
+            si = re.search(r'si="(\d+)"', attrs)
+            if si is None:
+                return fm.group(0)
+            s = int(si.group(1))
+            if fm.group(3) is not None:  # mestre → fórmula normal com texto
+                masters[s] = (num, fm.group(3))
+                return f"<f>{fm.group(3)}</f>"
+            # membro: deriva a fórmula do mestre com o offset da linha
+            if s not in masters:
+                return fm.group(0)
+            master_num, master_txt = masters[s]
+            offset = num - master_num
+            if offset:
+                interno = re.sub(
+                    r"([A-Z]{1,2})(\d+)",
+                    lambda r2: (f"{r2.group(1)}{int(r2.group(2)) + offset}"
+                                if r2.group(1) in _COLS_REF else r2.group(0)),
+                    master_txt)
+            else:
+                interno = master_txt
+            return f"<f>{interno}</f>"
+
+        corpo = _RE_F_SHARED.sub(_f2, corpo)
+        return f'<row r="{num}"{m.group(2)}>{corpo}</row>'
+
+    return re.sub(r'<row r="(\d+)"([^>]*)>(.*?)</row>', _row, texto,
+                  flags=re.DOTALL)
+
+
+_COLS_REF = set("ABCDEFGHIJKLMNOPQRSTUV")
+
+
+def _editar_bd1(xml_bd1: str, novas: pd.DataFrame, strings) -> tuple | None:
+    """Insere as remessas novas na POSIÇÃO ordenada por convênio — a base é
+    agrupada por convênio em ordem alfabética do início ao fim e as novas
+    entram JUNTO das remessas do mesmo convênio (como as de 03/09). Renumera
+    as rows/refs/fórmulas deslocadas. Retorna (xml_novo, fim_novo, células
+    t="s" novas, posições dos records [(record_pos, dados)]) ou None."""
     if novas is None or len(novas) == 0:
         return None
-    fim = _ultima_linha(xml_bd1)
-    linhas_xml, refs = [], 0
-    for i, (_, linha) in enumerate(novas.iterrows()):
+    fim_atual = _ultima_linha(xml_bd1)
+
+    # as fórmulas COMPARTILHADAS da base não sobrevivem à inserção de rows no
+    # meio (os grupos R–V partem e o Excel rejeita) — materializa primeiro
+    xml_bd1 = _materializar_shared(xml_bd1)
+
+    # (num, ano_da_emissao, convenio) das linhas existentes em ordem física
+    existentes: list[tuple[int, int | None, str | None]] = []
+    for m in re.finditer(r'<row r="(\d+)"([^>]*)>(.*?)</row>', xml_bd1, flags=re.DOTALL):
+        num = int(m.group(1))
+        if num < 2:
+            continue
+        ch = re.search(r'<c r="H\d+"[^>]*><v>(\d+)</v></c>', m.group(3))
+        convenio = None
+        if ch:
+            try:
+                convenio = strings.texto_de_indice(int(ch.group(1))).strip()
+            except (IndexError, ValueError):
+                convenio = None
+        ce = re.search(r'<c r="C\d+"[^>]*><v>(\d+)</v></c>', m.group(3))
+        ano = _ano_do_serial(ce.group(1)) if ce else None
+        existentes.append((num, ano, convenio))
+
+    # posição de cada nova: a base tem BLOCOS por ano (histórico até o bloco
+    # do ano corrente), cada bloco ordenado por convênio — a nova entra no
+    # bloco do ANO da sua emissão, junto das remessas do mesmo convênio
+    # (a primeira linha do bloco com convênio MAIOR marca o ponto)
+    insercoes: list[tuple[int | None, dict]] = []
+    for _, linha in novas.iterrows():
         dados = _converter_linha_wpd(linha)
-        xml_linha, n = _linha_bd1_nova(fim + 1 + i, dados, strings)
-        linhas_xml.append(xml_linha)
+        conv = str(dados["Convênio"] or "").strip()
+        ano_nova = dados["Emissão"].year if dados["Emissão"] is not None else None
+        do_ano = [(num, c_ex) for num, a_ex, c_ex in existentes
+                  if a_ex == ano_nova]
+        pos: int | None
+        if do_ano:
+            pos = do_ano[-1][0]  # padrão: fim do bloco do ano
+            for i, (num, c_ex) in enumerate(do_ano):
+                if c_ex is not None and c_ex > conv:
+                    pos = do_ano[i - 1][0] if i > 0 else do_ano[0][0] - 1
+                    break
+        else:
+            maiores = [num for num, a_ex, _ in existentes
+                       if a_ex is not None and ano_nova is not None
+                       and a_ex > ano_nova]
+            pos = min(maiores) - 1 if maiores else fim_atual
+        insercoes.append((pos, dados))
+
+    deslocs = sorted(p for p, _ in insercoes if p is not None)
+
+    def d(n):
+        return sum(1 for p in deslocs if p < n)
+
+    # 1) renumerar as rows existentes deslocadas: refs de células E fórmulas
+    #    R–V (SUMIFS(L807,D807,...) etc. — os refs internos acompanham a linha)
+    _RE_REF_F = re.compile(r"([A-Z]{1,2})(\d+)")
+    _COLS_FORMULA = set("ABCDEFGHIJKLMNOPQRSTUV")
+
+    def _renum_row(m):
+        num = int(m.group(1))
+        k = d(num)
+        if k == 0:
+            return m.group(0)
+        corpo = re.sub(r' r="([A-Z]+)(\d+)"',
+                       lambda mm: f' r="{mm.group(1)}{int(mm.group(2)) + k}"',
+                       m.group(3))
+
+        def _renum_f(fm):
+            interno = _RE_REF_F.sub(
+                lambda r2: (f"{r2.group(1)}{int(r2.group(2)) + k}"
+                            if r2.group(1) in _COLS_FORMULA else r2.group(0)),
+                fm.group(2))
+            return fm.group(1) + interno + fm.group(3)
+
+        corpo = re.sub(r"(<f>)(.*?)(</f>)", _renum_f, corpo)
+        return f'<row r="{num + k}"{m.group(2)}>{corpo}</row>'
+
+    texto = re.sub(r'<row r="(\d+)"([^>]*)>(.*?)</row>', _renum_row, xml_bd1,
+                   flags=re.DOTALL)
+
+    # 2) inserir as rows novas nas posições finais (empates em sequência)
+    refs = 0
+    posicoes: list[tuple[int | None, dict]] = []
+    for i, (pos, dados) in enumerate(insercoes):
+        if pos is None:
+            final = fim_atual + 1 + len(deslocs)
+        else:
+            alvo = pos + d(pos) + sum(1 for pj, _ in insercoes[:i] if pj == pos)
+            final = alvo + 1
+        xml_linha, n = _linha_bd1_nova(final, dados, strings)
         refs += n
-    bloco = "".join(linhas_xml)
-    idx = xml_bd1.rfind("</sheetData>")
-    novo = xml_bd1[:idx] + bloco + xml_bd1[idx:]
-    fim_novo = fim + len(novas)
-    novo = _substituir_ou_falhar(
+        if pos is None:
+            idx = texto.rfind("</sheetData>")
+            texto = texto[:idx] + xml_linha + texto[idx:]
+        else:
+            mm = re.search(rf'<row r="{alvo}"[^>]*>.*?</row>', texto,
+                           flags=re.DOTALL)
+            if not mm:
+                raise RuntimeError(
+                    f"inserção BD1: âncora da row {alvo} não localizada")
+            texto = texto[:mm.end()] + xml_linha + texto[mm.end():]
+        posicoes.append((pos - 1 if pos is not None else None, dados))
+
+    fim_novo = fim_atual + len(novas)
+    texto = _substituir_ou_falhar(
         r'<dimension ref="A1:V(\d+)"/>',
-        f'<dimension ref="A1:V{fim_novo}"/>', novo, "dimension da BD1")
-    return novo, fim_novo, refs
+        f'<dimension ref="A1:V{fim_novo}"/>', texto, "dimension da BD1")
+    return texto, fim_novo, refs, posicoes
 
 
 # ==============================================================================
@@ -1007,7 +1156,8 @@ def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
              bloco: list[dict] | None, mapeamento_bd2: dict,
              fim_bd1_novo: int | None, fim_bd2_novo: int | None,
              novas_bd2: list, atualizacoes_bd2: list,
-             mudancas_bd1: list | None = None) -> None:
+             mudancas_bd1: list | None = None,
+             posicoes_bd1: list | None = None) -> None:
     """Regenera os caches embutidos (BD1/BD2) com os dados finais — determinístico
     a cada rodada (sem depender de o Excel recalcular ao abrir). Timeline e
     slicers do arquivo do usuário são PRESERVADOS (sem filtros forçados)."""
@@ -1022,11 +1172,17 @@ def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
                               partes[nome_rec_bd2])
     n_inicial_bd2 = cache_bd2.n_registros
 
-    # -- BD1: um record por remessa nova (mesma ordem das linhas da planilha) --
-    if novas is not None and len(novas):
-        cache_bd1.anexar_registros(
-            [_record_bd1(_converter_linha_wpd(linha), cache_bd1, hoje)
-             for _, linha in novas.iterrows()])
+    # -- BD1: um record por remessa nova, na POSIÇÃO da linha inserida --
+    # (a base é agrupada por convênio; os records novos entram junto dos
+    # records do mesmo convênio — ordem decrescente para não deslocar as
+    # posições seguintes já calculadas)
+    if posicoes_bd1:
+        for rec_pos, dados in sorted(
+                posicoes_bd1,
+                key=lambda t: -(t[0] if t[0] is not None else 10**9)):
+            cache_bd1.inserir_registros(
+                rec_pos if rec_pos is not None else cache_bd1.n_registros,
+                [_record_bd1(dados, cache_bd1, hoje)])
 
     # -- BD1: upsert dos records das remessas existentes atualizadas --
     # (os itens de data novos entram no sharedItems do campo Baixa ANTES de
@@ -1205,6 +1361,7 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
     fim_bd1_novo = None
     houve_mudanca_bd1 = False
     mudancas_bd1: list = []
+    posicoes_bd1: list = []
 
     # ---- FASE 3a: BD1 — anexa as remessas novas do WPD ----
     remessas_existentes = _remessas_bd1(partes["xl/worksheets/sheet5.xml"], strings)
@@ -1214,7 +1371,7 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
         print("[FASE 3] BD1: nenhuma remessa nova no WPD — nada a anexar.")
     else:
         resultado = _editar_bd1(partes["xl/worksheets/sheet5.xml"], novas, strings)
-        xml_bd1, fim_bd1_novo, refs = resultado
+        xml_bd1, fim_bd1_novo, refs, posicoes_bd1 = resultado
         substituicoes["xl/worksheets/sheet5.xml"] = xml_bd1
         novas_celulas += refs
         houve_mudanca_bd1 = True
@@ -1270,7 +1427,7 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
     if mudou_alguma_coisa:
         _fase_3c(partes, substituicoes, novas, bloco, mapeamento_bd2,
                  fim_bd1_novo, fim_bd2_novo, novas_bd2, atualizacoes_bd2,
-                 mudancas_bd1)
+                 mudancas_bd1, posicoes_bd1)
 
     # ---- FASE 4: gravação ----
     if mudou_alguma_coisa:
