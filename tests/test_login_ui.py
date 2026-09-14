@@ -40,14 +40,16 @@ def test_login_css_nao_cita_o_hospital():
     assert "Hias" not in ui_comum.LOGIN_CSS
 
 
-def test_login_css_cartao_quadrado_440px():
-    """Cartão quadrado de 440px — um pouco menor que os 480px, a pedido do
-    usuário — com conteúdo proporcional."""
+def test_login_css_cartao_440px_altura_natural():
+    """Cartão de 440px de largura com ALTURA NATURAL (13/09, a pedido): o
+    min-height 440px forçava um quadrado com ~70px de vazio branco no rodapé
+    do cartão — o conteúdo fica colado no topo e o quadrado parece oco.
+    Sem min-height, o cartão abraça o conteúdo (~395px) e fica equilibrado."""
     css = ui_comum.LOGIN_CSS
-    assert "width: 440px" in css       # cartão quadrado no tamanho pedido
-    assert "min-height: 440px" in css  # quadrado: mesma altura mínima
-    assert "width: 80px" in css        # avatar proporcional
-    assert "min-height: 40px" in css   # campos proporcionais
+    assert "width: 440px" in css        # largura escolhida pelo usuário
+    assert "min-height: 440px" not in css  # altura natural, sem quadrado oco
+    assert "width: 80px" in css         # avatar proporcional
+    assert "min-height: 40px" in css    # campos proporcionais
 
 
 def test_nenhum_logo_do_hospital_na_interface():

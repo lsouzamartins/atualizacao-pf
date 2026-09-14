@@ -218,20 +218,21 @@ LOGIN_CSS = """
     /* Área do formulário: centralizada vertical e horizontalmente */
     div[data-testid="stHorizontalBlock"] { min-height: calc(100vh - 9rem); align-items: center; }
 
-    /* Cartão branco — quadrado de 440px (a pedido do usuário: um pouco menor
-       que os 480px). O st.container(border=True) de exigir_login renderiza,
-       no Streamlit 1.60, stColumn > stLayoutWrapper > stVerticalBlock (a
-       borda/padding padrão ficam no bloco interno; o testid
-       stVerticalBlockBorderWrapper é de versões mais novas e NÃO existe aqui).
-       Div aberta/fechada em markdowns separados também não aninha — era o
-       quadrado branco fantasma sem formulário. */
+    /* Cartão branco — 440px de largura com ALTURA NATURAL (13/09, a pedido:
+       o min-height 440px forçava um quadrado com ~70px de vazio branco no
+       rodapé — o conteúdo ficava colado no topo). O st.container(border=True)
+       de exigir_login renderiza, no Streamlit 1.60, stColumn > stLayoutWrapper
+       > stVerticalBlock (a borda/padding padrão ficam no bloco interno; o
+       testid stVerticalBlockBorderWrapper é de versões mais novas e NÃO
+       existe aqui). Div aberta/fechada em markdowns separados também não
+       aninha — era o quadrado branco fantasma sem formulário. */
     div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] {
         width: 440px; max-width: calc(100vw - 32px); margin: 0 auto;
     }
     div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
         background: #FFFFFF; border: none; border-radius: 18px;
         box-shadow: 0 24px 60px rgba(0, 0, 0, .35);
-        padding: 1.5rem 1.7rem 1.2rem 1.7rem; min-height: 440px;
+        padding: 1.5rem 1.7rem 1.2rem 1.7rem;
         box-sizing: border-box; gap: .35rem;
     }
     .login-card-titulo { font-size: 1.3rem; font-weight: 800; color: #131A3D; margin-bottom: .15rem; }
