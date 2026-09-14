@@ -53,13 +53,12 @@ def test_login_css_cartao_470px_altura_natural():
     assert "min-height: 44px" in css    # campos no alvo mínimo de toque (WCAG)
 
 
-def test_login_css_titulo_separado_do_avatar():
-    """O título 'Acesso ao sistema' fica no alto, centralizado, com respiro
-    antes do avatar — antes sobrepunha o avatar em ~8px (medição real).
-    Margem nominal de 2rem: o Streamlit aplica ~-16px entre elementos, então
-    2rem vira ~21px de separação visual (1.25rem virava só 9px)."""
+def test_login_css_sem_titulo_interno_no_cartao():
+    """O título saiu de dentro do cartão (13/09): agora é o título da página
+    ('Acesso ao sistema'), no alto — a regra .login-card-titulo vira CSS
+    morto e é removida."""
     css = ui_comum.LOGIN_CSS
-    assert "margin-bottom: 2rem" in css  # respiro do título (~21px visual)
+    assert ".login-card-titulo" not in css
 
 
 def test_login_css_escopo_do_cartao_com_filhos_diretos():
@@ -118,12 +117,26 @@ def test_exigir_login_tem_titulo_cartao_e_mesma_logica():
     import auth
     with open(auth.__file__, encoding="utf-8") as f:
         src = f.read()
-    assert "Atualização da Posição Financeira" in src
+    # 13/09, a pedido: o título grande da página passou a ser
+    # 'Acesso ao sistema' (antes 'Atualização da Posição Financeira') e o
+    # título interno do cartão foi removido (evita duplicar o nome).
+    assert "Atualização da Posição Financeira" not in src
     assert "Acesso ao sistema" in src
+    assert 'class="login-card-titulo"' not in src  # sem título dentro do cartão
     assert "banco.pode_tentar" in src
     assert "banco.autenticar" in src
     assert "banco.registrar_falha" in src
     assert "st.stop()" in src
+
+
+def test_login_css_tem_fundo_de_setas_ascendentes():
+    """Fundo da tela de login (13/09, a pedido — vetor de setas ascendentes
+    que o Leonardo escolheu): imagem embutida em base64 no CSS com cobertura
+    total da tela e véu do navy por cima para manter o contraste do cartão."""
+    css = ui_comum.LOGIN_CSS
+    assert "data:image/jpeg;base64" in css  # imagem embutida (sem arquivo extra)
+    assert "cover" in css                   # cobre a tela inteira
+    assert "linear-gradient" in css         # véu navy sobre a imagem
 
 
 def test_exigir_login_tem_login_senha_entrar_em_portugues():

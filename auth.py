@@ -104,7 +104,9 @@ def exigir_login():
     if token and _restaurar_sessao(token):
         st.rerun()
     injetar_css_login()
-    st.markdown('<div class="login-titulo-pagina">Atualização da Posição Financeira</div>',
+    # Título da página (13/09, a pedido): 'Acesso ao sistema' no alto,
+    # no lugar do nome antigo do app.
+    st.markdown('<div class="login-titulo-pagina">Acesso ao sistema</div>',
                 unsafe_allow_html=True)
     _, col_centro, _ = st.columns([1, 2, 1], vertical_alignment="center")
     with col_centro:
@@ -115,10 +117,8 @@ def exigir_login():
         # branco acima do formulário). O LOGIN_CSS mira este container via
         # div[data-testid="stVerticalBlockBorderWrapper"].
         with st.container(border=True):
-            st.markdown(
-                '<div class="login-card-titulo">Acesso ao sistema</div>',
-                unsafe_allow_html=True,
-            )
+            # (13/09: o título 'Acesso ao sistema' saiu do cartão — agora é o
+            # título da página, no alto, e evita duplicar com o cartão.)
             # Avatar do usuário digitado: foto cadastrada, inicial ou ícone padrão.
             # O empty() reserva o espaço no topo do cartão; o markdown o preenche a
             # cada rerun (o on_change do campo dispara rerun a cada tecla digitada).
