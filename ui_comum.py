@@ -253,11 +253,11 @@ LOGIN_CSS = """
 
     /* Avatar no cartão de login: foto do usuário (tamanho fixo, sem distorção)
        ou círculo padrão com a inicial — proporcional ao cartão de 470px */
-    .login-avatar { display: block; width: 88px; height: 88px; margin: 0 auto 1rem auto;
+    .login-avatar { display: block; width: 88px; height: 88px; margin: 0 auto 2rem auto;
                     border-radius: 50%; object-fit: cover; border: 3px solid #E2E8F0;
                     background: #F8FAFC; }
     .login-avatar-padrao { display: flex; align-items: center; justify-content: center;
-                           width: 88px; height: 88px; margin: 0 auto 1rem auto;
+                           width: 88px; height: 88px; margin: 0 auto 2rem auto;
                            border-radius: 50%; border: 3px solid #E2E8F0;
                            background: linear-gradient(135deg, #4D7CFE 0%, #3153E8 100%);
                            color: #FFFFFF; font-size: 1.7rem; font-weight: 800; }
@@ -269,7 +269,7 @@ LOGIN_CSS = """
        forma robusta (seletor de irmãos falharia — cada widget vive no
        próprio stElement). */
     div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] div[data-testid="stTextInput"] {
-        margin-bottom: .7rem;
+        margin-bottom: 1.25rem;
     }
     div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] div[data-testid="stTextInput"] input {
         border: 1px solid #E2E8F0 !important; border-radius: 10px !important;
@@ -303,7 +303,7 @@ LOGIN_CSS = """
 
     /* Checkbox 'Lembrar de mim' — texto sempre visível sobre o cartão branco,
        mínimo de 14px (legibilidade) */
-    div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] div[data-testid="stCheckbox"] { margin: 0 0 .5rem 0; }
+    div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] div[data-testid="stCheckbox"] { margin: 0 0 .75rem 0; }
     div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] div[data-testid="stCheckbox"] label p {
         color: #64748B !important; font-size: .875rem !important;
     }

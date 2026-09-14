@@ -82,6 +82,17 @@ def test_exigir_login_linha_lembrar_de_mim_esqueceu_a_senha():
     assert src.index("login_lembrar") < src.index("login_esqueceu") < src.index("login_entrar")
 
 
+def test_login_css_espacamento_entre_informacoes():
+    """Espaçamento entre as informações do cartão (13/09, a pedido —
+    'aumenta o espaço entre as informações'): margens nominais compensam
+    a força de ~-16px que o Streamlit aplica entre elementos consecutivos.
+    Alvo visual: 16–24px entre avatar/campos/linha/Entrar (pesquisa web)."""
+    css = ui_comum.LOGIN_CSS
+    assert "margin: 0 auto 2rem auto" in css   # avatar -> campos (~18px visuais)
+    assert "margin-bottom: 1.25rem" in css     # entre campos (~18px visuais)
+    assert "margin: 0 0 .75rem 0" in css       # linha -> Entrar (~20px visuais)
+
+
 def test_login_css_centralizacao_nao_atinge_colunas_internas():
     """A regra de centralização vertical (min-height no stHorizontalBlock)
     deve excluir blocos ANINHADOS — o st.columns interno do cartão (linha
