@@ -129,7 +129,17 @@ def exigir_login():
             senha = st.text_input("Senha", type="password", placeholder="Digite sua senha",
                                   label_visibility="collapsed", key="login_senha")
             slot_avatar.markdown(_avatar_login(login), unsafe_allow_html=True)
-            lembrar = st.checkbox("Lembrar de mim", key="login_lembrar")
+            # Padrão clássico das telas de login: 'Lembrar de mim' à esquerda e
+            # 'Esqueceu a senha?' à direita, na mesma linha, acima do Entrar.
+            mostrar_recuperacao = False
+            col_lembrar, col_esqueceu = st.columns([1, 1], vertical_alignment="center")
+            with col_lembrar:
+                lembrar = st.checkbox("Lembrar de mim", key="login_lembrar")
+            with col_esqueceu:
+                # Estrutura do EPS: link de recuperação. Sem e-mail no sistema,
+                # o caminho real é o administrador redefinir na Administração.
+                if st.button("Esqueceu a senha?", type="tertiary", key="login_esqueceu"):
+                    mostrar_recuperacao = True
             if st.button("Entrar", type="primary", width="stretch", key="login_entrar"):
                 conn = _conexao()
                 try:
@@ -154,9 +164,8 @@ def exigir_login():
                             st.error("Usuário ou senha incorretos.")
                 finally:
                     conn.close()
-            # Estrutura do EPS: link de recuperação. Sem e-mail no sistema, o
-            # caminho real é o administrador redefinir na página Administração.
-            if st.button("Esqueceu a senha?", type="tertiary", key="login_esqueceu"):
+            # Aviso do link de recuperação, abaixo do Entrar (fora da linha).
+            if mostrar_recuperacao:
                 st.info("Esqueceu a senha? Fale com o administrador do sistema "
                         "para redefini-la.")
     # Rodapé da tela de login (a pedido): crédito do desenvolvedor.

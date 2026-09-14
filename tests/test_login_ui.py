@@ -40,16 +40,56 @@ def test_login_css_nao_cita_o_hospital():
     assert "Hias" not in ui_comum.LOGIN_CSS
 
 
-def test_login_css_cartao_440px_altura_natural():
-    """Cartão de 440px de largura com ALTURA NATURAL (13/09, a pedido): o
-    min-height 440px forçava um quadrado com ~70px de vazio branco no rodapé
-    do cartão — o conteúdo fica colado no topo e o quadrado parece oco.
-    Sem min-height, o cartão abraça o conteúdo (~395px) e fica equilibrado."""
+def test_login_css_cartao_470px_altura_natural():
+    """Cartão de 470px de largura com ALTURA NATURAL (13/09, a pedido —
+    'alarga mais um pouco o quadrado branco'): o min-height 440px forçava
+    um quadrado com ~70px de vazio no rodapé. Sem min-height, o cartão
+    abraça o conteúdo; 470px fica na faixa boa de 380–500px das telas de
+    login modernas (pesquisa web 13/09)."""
     css = ui_comum.LOGIN_CSS
-    assert "width: 440px" in css        # largura escolhida pelo usuário
+    assert "width: 470px" in css        # largura pedida ('um pouco mais')
     assert "min-height: 440px" not in css  # altura natural, sem quadrado oco
-    assert "width: 80px" in css         # avatar proporcional
-    assert "min-height: 40px" in css    # campos proporcionais
+    assert "width: 88px" in css         # avatar proporcional ao cartão maior
+    assert "min-height: 44px" in css    # campos no alvo mínimo de toque (WCAG)
+
+
+def test_login_css_titulo_separado_do_avatar():
+    """O título 'Acesso ao sistema' fica no alto, centralizado, com respiro
+    antes do avatar — antes sobrepunha o avatar em ~8px (medição real).
+    Margem nominal de 2rem: o Streamlit aplica ~-16px entre elementos, então
+    2rem vira ~21px de separação visual (1.25rem virava só 9px)."""
+    css = ui_comum.LOGIN_CSS
+    assert "margin-bottom: 2rem" in css  # respiro do título (~21px visual)
+
+
+def test_login_css_escopo_do_cartao_com_filhos_diretos():
+    """As regras do cartão usam combinador de filho direto (stColumn >
+    stVerticalBlock > stLayoutWrapper): sem ele, o stLayoutWrapper das
+    colunas INTERNAS do cartão (linha Lembrar de mim + Esqueceu a senha?)
+    herdava o width: 470px (medido via Playwright)."""
+    css = ui_comum.LOGIN_CSS
+    assert ('div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > '
+            'div[data-testid="stLayoutWrapper"]') in css
+
+
+def test_exigir_login_linha_lembrar_de_mim_esqueceu_a_senha():
+    """Padrão clássico das telas de login: 'Lembrar de mim' à esquerda e
+    'Esqueceu a senha?' à direita na MESMA linha (st.columns), acima do Entrar."""
+    import auth
+    with open(auth.__file__, encoding="utf-8") as f:
+        src = f.read()
+    assert 'st.columns(' in src
+    assert src.index("login_lembrar") < src.index("login_esqueceu") < src.index("login_entrar")
+
+
+def test_login_css_centralizacao_nao_atinge_colunas_internas():
+    """A regra de centralização vertical (min-height no stHorizontalBlock)
+    deve excluir blocos ANINHADOS — o st.columns interno do cartão (linha
+    Lembrar de mim + Esqueceu a senha?) também é um stHorizontalBlock e,
+    sem o :not(... *), herdava o min-height de 100vh e criava um vão de
+    ~424px entre a Senha e o checkbox (medido via Playwright)."""
+    css = ui_comum.LOGIN_CSS
+    assert 'div[data-testid="stHorizontalBlock"]:not(div[data-testid="stHorizontalBlock"] *)' in css
 
 
 def test_nenhum_logo_do_hospital_na_interface():

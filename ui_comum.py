@@ -215,93 +215,110 @@ LOGIN_CSS = """
         letter-spacing: .2px;
     }
 
-    /* Área do formulário: centralizada vertical e horizontalmente */
-    div[data-testid="stHorizontalBlock"] { min-height: calc(100vh - 9rem); align-items: center; }
+    /* Área do formulário: centralizada vertical e horizontalmente.
+       O :not(... *) exclui stHorizontalBlock ANINHADOS — o st.columns interno
+       do cartão também é um stHorizontalBlock e, sem a exclusão, herdava o
+       min-height de 100vh (vão de ~424px entre a Senha e o checkbox). */
+    div[data-testid="stHorizontalBlock"]:not(div[data-testid="stHorizontalBlock"] *) {
+        min-height: calc(100vh - 9rem); align-items: center;
+    }
 
-    /* Cartão branco — 440px de largura com ALTURA NATURAL (13/09, a pedido:
-       o min-height 440px forçava um quadrado com ~70px de vazio branco no
-       rodapé — o conteúdo ficava colado no topo). O st.container(border=True)
-       de exigir_login renderiza, no Streamlit 1.60, stColumn > stLayoutWrapper
-       > stVerticalBlock (a borda/padding padrão ficam no bloco interno; o
+    /* Cartão branco — 470px de largura com ALTURA NATURAL (13/09, a pedido:
+       'alarga mais um pouco o quadrado branco'; o min-height 440px forçava
+       um quadrado com ~70px de vazio no rodapé). 470px fica na faixa de
+       380–500px das telas de login modernas; padding 32px é o padrão das
+       referências pesquisadas. O st.container(border=True) de exigir_login
+       renderiza, no Streamlit 1.60, stColumn > stLayoutWrapper >
+       stVerticalBlock (a borda/padding padrão ficam no bloco interno; o
        testid stVerticalBlockBorderWrapper é de versões mais novas e NÃO
        existe aqui). Div aberta/fechada em markdowns separados também não
        aninha — era o quadrado branco fantasma sem formulário. */
-    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] {
-        width: 440px; max-width: calc(100vw - 32px); margin: 0 auto;
+    div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] {
+        width: 470px; max-width: calc(100vw - 32px); margin: 0 auto;
     }
-    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
+    div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
         background: #FFFFFF; border: none; border-radius: 18px;
         box-shadow: 0 24px 60px rgba(0, 0, 0, .35);
-        padding: 1.5rem 1.7rem 1.2rem 1.7rem;
+        padding: 2rem 2rem 1.5rem 2rem;
         box-sizing: border-box; gap: .35rem;
     }
-    .login-card-titulo { font-size: 1.3rem; font-weight: 800; color: #131A3D; margin-bottom: .15rem; }
+    /* Título no alto do cartão, centralizado, com respiro antes do avatar.
+       2rem nominais viram ~21px visuais: o Streamlit aplica ~-16px de margem
+       entre elementos consecutivos (1.25rem virava só 9px; sem margem, o
+       título sobrepunha o avatar em ~8px). */
+    .login-card-titulo {
+        text-align: center; font-size: 1.3rem; font-weight: 800; color: #131A3D;
+        margin-bottom: 2rem;
+    }
 
     /* Avatar no cartão de login: foto do usuário (tamanho fixo, sem distorção)
-       ou círculo padrão com a inicial — proporcional ao quadrado de 440px */
-    .login-avatar { display: block; width: 80px; height: 80px; margin: 0 auto .8rem auto;
+       ou círculo padrão com a inicial — proporcional ao cartão de 470px */
+    .login-avatar { display: block; width: 88px; height: 88px; margin: 0 auto 1rem auto;
                     border-radius: 50%; object-fit: cover; border: 3px solid #E2E8F0;
                     background: #F8FAFC; }
     .login-avatar-padrao { display: flex; align-items: center; justify-content: center;
-                           width: 80px; height: 80px; margin: 0 auto .8rem auto;
+                           width: 88px; height: 88px; margin: 0 auto 1rem auto;
                            border-radius: 50%; border: 3px solid #E2E8F0;
                            background: linear-gradient(135deg, #4D7CFE 0%, #3153E8 100%);
-                           color: #FFFFFF; font-size: 1.6rem; font-weight: 800; }
+                           color: #FFFFFF; font-size: 1.7rem; font-weight: 800; }
     .login-avatar-padrao svg { margin: 0; width: 32px; height: 32px; }
 
-    /* Campos com ícones (usuário / cadeado) — compactos para o quadrado.
-       Login renderiza <input type="text"> e Senha, type="password": atributo
-       distingue de forma robusta (seletor de irmãos falharia — cada widget
-       vive no próprio stElement). */
-    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] div[data-testid="stTextInput"] {
-        margin-bottom: .5rem;
+    /* Campos com ícones (usuário / cadeado) — 44px de altura (alvo mínimo de
+       toque WCAG), espaçamento ~18px entre campos. Login renderiza
+       <input type="text"> e Senha, type="password": atributo distingue de
+       forma robusta (seletor de irmãos falharia — cada widget vive no
+       próprio stElement). */
+    div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] div[data-testid="stTextInput"] {
+        margin-bottom: .7rem;
     }
-    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] div[data-testid="stTextInput"] input {
+    div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] div[data-testid="stTextInput"] input {
         border: 1px solid #E2E8F0 !important; border-radius: 10px !important;
-        background: #F8FAFC !important; padding: .45rem .85rem .45rem 2.4rem !important;
-        font-size: .95rem !important; color: #131A3D !important; min-height: 40px;
+        background: #F8FAFC !important; padding: .55rem .9rem .55rem 2.6rem !important;
+        font-size: 1rem !important; color: #131A3D !important; min-height: 44px;
     }
-    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] div[data-testid="stTextInput"] input:focus {
+    div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] div[data-testid="stTextInput"] input:focus {
         border-color: #4D7CFE !important; box-shadow: 0 0 0 3px rgba(77, 124, 254, .18) !important;
     }
-    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] div[data-testid="stTextInput"] input:not([type="password"]) {
+    div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] div[data-testid="stTextInput"] input:not([type="password"]) {
         background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3C/svg%3E") !important;
         background-repeat: no-repeat !important; background-position: .8rem center !important; background-size: 16px !important;
     }
-    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] div[data-testid="stTextInput"] input[type="password"] {
+    div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] div[data-testid="stTextInput"] input[type="password"] {
         background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='11' x='3' y='11' rx='2' ry='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 10 0v4'/%3E%3C/svg%3E") !important;
         background-repeat: no-repeat !important; background-position: .8rem center !important; background-size: 16px !important;
     }
 
-    /* Botão Entrar — compacto */
-    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] [data-testid="stButton"] > button[kind="primary"] {
+    /* Botão Entrar — largura total, altura confortável */
+    div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] [data-testid="stButton"] > button[kind="primary"] {
         background: linear-gradient(90deg, #4D7CFE 0%, #3153E8 100%) !important;
         border: none !important; border-radius: 10px !important;
-        padding: .6rem 1rem !important; font-weight: 700 !important; font-size: .95rem !important;
+        padding: .65rem 1rem !important; font-weight: 700 !important; font-size: 1rem !important;
         color: #FFFFFF !important; width: 100%; transition: filter .2s ease !important;
     }
-    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] [data-testid="stButton"] > button[kind="primary"]:hover { filter: brightness(1.1); }
-    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] [data-testid="stButton"] > button[kind="primary"]:disabled { background: #CBD5E1 !important; }
+    div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] [data-testid="stButton"] > button[kind="primary"]:hover { filter: brightness(1.1); }
+    div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] [data-testid="stButton"] > button[kind="primary"]:disabled { background: #CBD5E1 !important; }
 
     /* Mensagens de erro dentro do cartão */
-    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] [data-testid="stAlert"] { border-radius: 10px; }
+    div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] [data-testid="stAlert"] { border-radius: 10px; }
 
-    /* Checkbox 'Lembrar de mim' — texto sempre visível sobre o cartão branco */
-    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] div[data-testid="stCheckbox"] { margin: 0 0 .5rem 0; }
-    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] div[data-testid="stCheckbox"] label p {
-        color: #64748B !important; font-size: .85rem !important;
+    /* Checkbox 'Lembrar de mim' — texto sempre visível sobre o cartão branco,
+       mínimo de 14px (legibilidade) */
+    div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] div[data-testid="stCheckbox"] { margin: 0 0 .5rem 0; }
+    div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] div[data-testid="stCheckbox"] label p {
+        color: #64748B !important; font-size: .875rem !important;
     }
 
-    /* Link 'Esqueceu a senha?' (botão terciário centralizado) */
-    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] [data-testid="stButton"]:has(button[kind="tertiary"]) {
-        text-align: center; margin-top: .5rem;
+    /* Link 'Esqueceu a senha?' (botão terciário) — à direita da linha,
+       ao lado do 'Lembrar de mim' (padrão clássico das telas de login) */
+    div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] [data-testid="stButton"]:has(button[kind="tertiary"]) {
+        text-align: right; margin-top: 0;
     }
-    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] [data-testid="stButton"] > button[kind="tertiary"] {
+    div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] [data-testid="stButton"] > button[kind="tertiary"] {
         background: transparent !important; border: none !important; box-shadow: none !important;
-        color: #4D7CFE !important; font-size: .85rem !important; font-weight: 600 !important;
+        color: #4D7CFE !important; font-size: .875rem !important; font-weight: 600 !important;
         padding: .1rem .4rem !important;
     }
-    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] [data-testid="stButton"] > button[kind="tertiary"]:hover {
+    div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > div[data-testid="stLayoutWrapper"] [data-testid="stButton"] > button[kind="tertiary"]:hover {
         color: #3153E8 !important; text-decoration: underline !important;
     }
 </style>
