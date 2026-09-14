@@ -163,4 +163,5 @@ def test_exigir_login_tem_rodape_desenvolvedor():
     assert "Desenvolvedor: Leonardo Martins" in src
     assert "09/2026" in src
     assert "Desenvolvido com Claude Code" in src
+    assert "Fundo: Freepik" in src  # atribuição da licença gratuita do vetor
     assert ".login-rodape" in ui_comum.LOGIN_CSS
