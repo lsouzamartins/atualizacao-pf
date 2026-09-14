@@ -168,11 +168,10 @@ def exigir_login():
             if mostrar_recuperacao:
                 st.info("Esqueceu a senha? Fale com o administrador do sistema "
                         "para redefini-la.")
-    # Rodapé da tela de login (a pedido): crédito do desenvolvedor e do vetor
-    # de fundo (atribuição exigida pela licença gratuita do Freepik).
+    # Rodapé da tela de login: mesmo crédito padrão do app (13/09, a pedido —
+    # 'deixa todas iguais').
     st.markdown(
-        '<div class="login-rodape">Desenvolvedor: Leonardo Martins · 09/2026 · '
-        'Desenvolvido com Claude Code · Fundo: Freepik</div>',
+        '<div class="login-rodape">Desenvolvedor: Leonardo Martins · Revisado por Claude Code (Anthropic) · V 4.2026.0913 · Streamlit + Lucide</div>',
         unsafe_allow_html=True,
     )
     st.stop()

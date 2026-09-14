@@ -1,6 +1,15 @@
 import ui_comum
 
 
+def test_versao_rodape_padronizado():
+    """Rodapé padrão (13/09, a pedido — 'deixa todas iguais'): o crédito do
+    app passa de 'Criado por' para 'Desenvolvedor:' e a versão vira a da
+    rodada 13/09; o rodapé do login usa o MESMO texto."""
+    assert ui_comum.VERSAO == ("Desenvolvedor: Leonardo Martins · Revisado por "
+                               "Claude Code (Anthropic) · V 4.2026.0913 · "
+                               "Streamlit + Lucide")
+
+
 def test_formatar_data_br_converte_iso_para_br():
     assert ui_comum.formatar_data_br("2026-09-01") == "01-09-2026"
     assert ui_comum.formatar_data_br("2026-01-02") == "02-01-2026"

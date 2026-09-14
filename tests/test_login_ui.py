@@ -156,12 +156,15 @@ def test_exigir_login_tem_login_senha_entrar_em_portugues():
 
 
 def test_exigir_login_tem_rodape_desenvolvedor():
-    """Rodapé da tela de login (a pedido): crédito do desenvolvedor."""
+    """Rodapé da tela de login: mesmo crédito padrão do app
+    (13/09, a pedido — 'deixa todas iguais'). O texto completo fica em
+    ui_comum.VERSAO (teste de igualdade em test_ui_comum); aqui o markdown
+    é montado em literais de várias linhas, então confiro os pedaços."""
     import auth
     with open(auth.__file__, encoding="utf-8") as f:
         src = f.read()
     assert "Desenvolvedor: Leonardo Martins" in src
-    assert "09/2026" in src
-    assert "Desenvolvido com Claude Code" in src
-    assert "Fundo: Freepik" in src  # atribuição da licença gratuita do vetor
+    assert "Revisado por Claude Code (Anthropic)" in src
+    assert "V 4.2026.0913" in src
+    assert "Streamlit + Lucide" in src
     assert ".login-rodape" in ui_comum.LOGIN_CSS
