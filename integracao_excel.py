@@ -229,6 +229,35 @@ def _ultima_linha(xml: str) -> int:
 
 
 # ==============================================================================
+# Arquivo gerado abre no topo (posição de rolagem gravada na base)
+# ==============================================================================
+_RE_TOPCEL = re.compile(
+    r'(<pane\b[^>]*?)\s+topLeftCell="[A-Z]+\d+"([^>]*?/>)', re.DOTALL)
+
+
+def _col_letra(n: int) -> str:
+    """Letra da coluna do Excel (1 → "A", 2 → "B", 27 → "AA"...)."""
+    letras = ""
+    while n:
+        n, resto = divmod(n - 1, 26)
+        letras = chr(65 + resto) + letras
+    return letras
+
+
+def _abrir_no_topo(xml: str) -> str:
+    """Troca o topLeftCell de cada painel congelado pelo próprio ponto de
+    congelamento — o arquivo gerado abre sempre no topo, independente de onde
+    o cursor estava quando a base foi salva no Excel (15/09/2026: "BD1 começa
+    na linha 36235"). Idempotente: painel já no topo fica igual."""
+    def _trocar(m):
+        attrs = dict(re.findall(r'(\w+)="([^"]*)"', m.group(1)))
+        x = int(attrs.get("xSplit", "0"))
+        y = int(attrs.get("ySplit", "0"))
+        return f'{m.group(1)} topLeftCell="{_col_letra(x + 1)}{y + 1}"{m.group(2)}'
+    return _RE_TOPCEL.sub(_trocar, xml)
+
+
+# ==============================================================================
 # BD1 — remessas existentes e anexo das novas (espelha _anexar_emissoes_bd1)
 # ==============================================================================
 def _remessas_bd1(xml_bd1: str, strings) -> set:
@@ -1436,6 +1465,12 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
     if houve_mudanca_bd1:
         substituicoes["xl/workbook.xml"] = _ajustar_workbook(
             partes["xl/workbook.xml"], fim_bd1_novo, calc_completo=True)
+    # -- BD1/BD2 sempre abrem no topo do arquivo gerado (rolagem da base
+    #    ignorada) — a aba que não mudou entra só com o ajuste da posição --
+    if mudou_alguma_coisa:
+        for nome_aba in ("xl/worksheets/sheet5.xml", "xl/worksheets/sheet6.xml"):
+            substituicoes[nome_aba] = _abrir_no_topo(
+                substituicoes.get(nome_aba, partes[nome_aba]))
     _gravar_zip_cirurgico(xlsx_hias_base, xlsx_hias_final, substituicoes)
     print(f"[FASE 4] Arquivo final gravado: {xlsx_hias_final}")
     if mudou_alguma_coisa:

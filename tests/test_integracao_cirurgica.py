@@ -522,6 +522,52 @@ def test_substituir_ou_falhar_com_casamento_substitui():
 
 
 # ==============================================================================
+# Arquivo gerado abre no topo (topLeftCell = ponto de congelamento)
+# ==============================================================================
+def _planilha_com_pane(pane):
+    ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    return (DECL + f'<worksheet {ns}><sheetViews><sheetView tabSelected="1" '
+            f'workbookViewId="0">{pane}<selection pane="bottomRight" '
+            'activeCell="A36676" sqref="A36676"/></sheetView></sheetViews>'
+            '<sheetData/></worksheet>')
+
+
+def test_abrir_no_topo_bd1_volta_para_o_congelamento_b2():
+    xml = _planilha_com_pane('<pane xSplit="1" ySplit="1" topLeftCell="B35811" '
+                             'activePane="bottomRight" state="frozen"/>')
+    novo = ie._abrir_no_topo(xml)
+    assert 'topLeftCell="B2"' in novo
+    assert "B35811" not in novo
+    assert 'activePane="bottomRight" state="frozen"' in novo
+
+
+def test_abrir_no_topo_bd2_so_linha_congelada_volta_para_a2():
+    xml = _planilha_com_pane('<pane ySplit="1" topLeftCell="A793" '
+                             'activePane="bottomLeft" state="frozen"/>')
+    novo = ie._abrir_no_topo(xml)
+    assert 'topLeftCell="A2"' in novo
+    assert "A793" not in novo
+
+
+def test_abrir_no_topo_sem_paine_intacta():
+    xml = _planilha_com_pane("")
+    assert ie._abrir_no_topo(xml) == xml
+
+
+def test_abrir_no_topo_idempotente_ja_no_topo():
+    xml = _planilha_com_pane('<pane xSplit="1" ySplit="10" topLeftCell="B11" '
+                             'activePane="bottomRight" state="frozen"/>')
+    assert ie._abrir_no_topo(xml) == xml
+
+
+def test_col_letra():
+    assert ie._col_letra(1) == "A"
+    assert ie._col_letra(2) == "B"
+    assert ie._col_letra(26) == "Z"
+    assert ie._col_letra(27) == "AA"
+
+
+# ==============================================================================
 # Integração completa (fixture sintética escrita à mão)
 # ==============================================================================
 def _pivot_campos_bd1():
@@ -613,10 +659,19 @@ def _criar_base(tmp_path, sem_dimension_bd2=False):
     ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
     sheet1 = (DECL + f'<worksheet {ns}><dimension ref="A1:A1"/><sheetData>'
               + '<row r="1"><c r="A1" t="s"><v>24</v></c></row></sheetData></worksheet>')
-    sheet5 = (DECL + f'<worksheet {ns}><dimension ref="A1:V2"/><sheetData>'
+    # painéis congelados com a rolagem "grudada" embaixo (estado real da base
+    # de 15/09/2026: BD1 salva com topLeftCell B35811, BD2 com A793) — o motor
+    # deve gerar o arquivo abrindo no ponto de congelamento (B2/A2)
+    sheet5 = (DECL + f'<worksheet {ns}><sheetViews><sheetView workbookViewId="0">'
+              + '<pane xSplit="1" ySplit="1" topLeftCell="B35811" '
+              + 'activePane="bottomRight" state="frozen"/></sheetView></sheetViews>'
+              + '<dimension ref="A1:V2"/><sheetData>'
               + f'<row r="1">{cel_bd1_header}</row>{row2_bd1}</sheetData></worksheet>')
     dimension_bd2 = '<dimension ref="A1:J2"/>' if not sem_dimension_bd2 else ""
-    sheet6 = (DECL + f'<worksheet {ns}>{dimension_bd2}<sheetData>'
+    sheet6 = (DECL + f'<worksheet {ns}><sheetViews><sheetView workbookViewId="0">'
+              + '<pane ySplit="1" topLeftCell="A793" activePane="bottomLeft" '
+              + 'state="frozen"/></sheetView></sheetViews>'
+              + f'{dimension_bd2}<sheetData>'
               + f'<row r="1">{cel_bd2_header}</row>{row2_bd2}</sheetData></worksheet>')
 
     def tabela(id_, nome, ref, colunas):
@@ -948,6 +1003,14 @@ def test_processamento_completo(tmp_path):
                 in sheet5_final)
         assert ('<c r="V4" s="37" t="str"><f>=IF(RIGHT(A4,3)="(R)","Recurso","Comum")</f><v>Recurso</v></c>'
                 in sheet5_final)
+
+        # arquivo gerado abre no topo: topLeftCell = ponto de congelamento
+        # (a base da fixture está salva com a rolagem embaixo, como a real)
+        assert 'topLeftCell="B2"' in sheet5_final
+        assert "B35811" not in sheet5_final
+        sheet6_final = zf.read("xl/worksheets/sheet6.xml").decode("utf-8")
+        assert 'topLeftCell="A2"' in sheet6_final
+        assert "A793" not in sheet6_final
 
         # ---- FASE 3c: caches regenerados (def1 = BD2, def2 = BD1) ----
         def1 = zf.read("xl/pivotCache/pivotCacheDefinition1.xml").decode("utf-8")
