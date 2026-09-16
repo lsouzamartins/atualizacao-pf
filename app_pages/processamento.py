@@ -5,6 +5,8 @@ Execução das fases 0–4 (lógica intocável em core.py).
 
 Revisão: Claude Code (Anthropic) · 28/07/2026 · migrada para app_pages/ em 19/08/2026
 · 01/09/2026 · uploads por sessão (file_uploader), gravação no banco e downloads
+· 15/09/2026 · base da Posição Financeira persistente no site (dados/base_pf/):
+  a execução pede só os 2 relatórios, faz backup e atualiza a própria base
 ==============================================================================
 """
 import os
@@ -18,12 +20,14 @@ import pandas as pd
 import streamlit as st
 
 import banco
+import base_pf
 
 from ui_comum import icone, pastas, VERSAO
 from core import (
     salvar_log_erro,
     salvar_log_execucao,
     gerar_resumo,
+    criar_backup_hias,
     processar_fase_0_wpd,
     processar_fase_1_nao_identificado,
     processar_fases_2_3_4_hias,
@@ -58,6 +62,7 @@ PASTA_SAIDA = _caminhos["saida"]
 PASTA_ERROS = _caminhos["erros"]
 PASTA_LOGS = _caminhos["logs"]
 PASTA_UPLOADS = os.path.join(PASTA_RAIZ, "uploads")
+XLSX_HIAS_BASE = base_pf.caminho_base()
 
 
 # ==============================================================================
@@ -74,6 +79,42 @@ for key, val in defaults.items():
         st.session_state[key] = val
 
 
+# ---- BASE DA POSIÇÃO FINANCEIRA (persistente no site) ----
+st.markdown(f"### {icone('database', 20, '#1C5A8A')} Base da Posição Financeira", unsafe_allow_html=True)
+info_base = base_pf.info_base()
+col_base_info, col_base_baixar, col_base_trocar = st.columns([2, 1, 1], gap="large")
+
+with col_base_info:
+    if info_base:
+        st.markdown(f"""
+        <div class="info-card">
+            <p>{icone('database', 16, '#1C5A8A')} <b>Base no site:</b> atualizada em
+            {info_base['modificado'].strftime('%d/%m/%Y %H:%M')} ·
+            {info_base['tamanho'] / (1024 * 1024):.1f} MB</p>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.warning("Nenhuma base cadastrada no site. Envie o arquivo abaixo para "
+                   "liberar o processamento.")
+
+with col_base_baixar:
+    if info_base:
+        with open(info_base["caminho"], "rb") as f:
+            st.download_button("Baixar base",
+                               data=f.read(),
+                               file_name=base_pf.NOME_BASE,
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+with col_base_trocar:
+    up_base = st.file_uploader("Substituir base (.xlsx)", type=["xlsx"], key="up_base")
+    if up_base is not None and st.button("Salvar base no site", type="primary"):
+        base_pf.salvar_base(up_base.getvalue(), pasta_backup=PASTA_SAIDA)
+        st.success("Base salva no site. A anterior ficou em backup na pasta de saída.")
+        st.rerun()
+
+st.divider()
+
+
 # ---- LAYOUT PRINCIPAL ----
 col_acoes, col_status = st.columns([1.5, 1], gap="large")
 
@@ -81,14 +122,14 @@ with col_acoes:
     st.markdown(f"### {icone('play', 20, '#1C5A8A')} Executar Processamento", unsafe_allow_html=True)
 
     st.markdown("### 📂 Arquivos do dia")
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     arquivos = {
         "WPD-26.xls": col1.file_uploader("WPD-26 (.xls)", type=["xls"], key="up_wpd"),
         "Não_Identificado.xls": col2.file_uploader("Não Identificado (.xls)", type=["xls"], key="up_ni"),
-        "Posição Financeira Hias.xlsx": col3.file_uploader("Posição Financeira Hias (.xlsx)",
-                                                           type=["xlsx"], key="up_hias"),
     }
-    btn_desabilitado = not all(arquivos.values()) or st.session_state.em_andamento
+    btn_desabilitado = (not all(arquivos.values())
+                        or st.session_state.em_andamento
+                        or not base_pf.base_existe())
 
     executar = st.button(
         "Atualizar posição financeira",
@@ -130,7 +171,7 @@ if executar and not st.session_state.em_andamento:
 
     xls_wpd = os.path.join(pasta_sessao, "WPD-26.xls")
     xls_nao_identificado = os.path.join(pasta_sessao, "Não_Identificado.xls")
-    xlsx_hias_base = os.path.join(pasta_sessao, "Posição Financeira Hias.xlsx")
+    xlsx_hias_base = XLSX_HIAS_BASE
     xlsx_wpd_limpo = os.path.join(PASTA_SAIDA, "WPD-26_Extraido.xlsx")
     xlsx_nao_identificado_limpo = os.path.join(PASTA_SAIDA, "Não_Identificado_Extraido.xlsx")
     data_hoje = datetime.now().strftime("%d.%m.%y")
@@ -172,6 +213,8 @@ if executar and not st.session_state.em_andamento:
             # FASES 2-4 (66% → 100%)
             fase_atual = "Fases 2-4 (Integração Hias)"
             progress_bar.progress(71, text="[Fases 2-4/4] Integrando ao Hias...")
+            print("💾 Backup da base atual do site...")
+            criar_backup_hias(xlsx_hias_base, PASTA_SAIDA)
             processar_fases_2_3_4_hias(
                 xlsx_nao_identificado_limpo, xlsx_hias_base, xlsx_hias_final,
                 PASTA_RAIZ, PASTA_SAIDA, xlsx_wpd_limpo
@@ -204,6 +247,12 @@ if executar and not st.session_state.em_andamento:
         st.session_state.em_andamento = False
 
     if sucesso:
+        try:
+            base_pf.atualizar_base(xlsx_hias_final)
+            print("✅ Base da Posição Financeira atualizada no site.")
+        except Exception as e:
+            print(f"[AVISO] Processamento OK, mas falha ao atualizar a base no site: {e}")
+            st.warning(f"Processamento OK, mas falha ao atualizar a base no site: {e}")
         try:
             df_resumos = agregar_para_banco(df_ni)
             arquivos_gerados = [os.path.basename(xlsx_hias_final),
@@ -292,6 +341,10 @@ else:
             <li><b>Fase 2-3:</b> Abre o Excel Hias e injeta os dados processados na aba <code>BD2</code></li>
             <li><b>Fase 4:</b> Salva uma nova versão datada do arquivo Hias</li>
         </ol>
+        <p>A base da Posição Financeira fica salva no site: você envia só os
+        2 relatórios e o site atualiza a própria base (com backup automático).
+        Use o botão de substituir base apenas quando fizer correções manuais
+        na planilha.</p>
         <p class="info-paths">
             {icone('folder-output', 14, '#64748B')} Saída: <code>{PASTA_SAIDA}</code>
         </p>
