@@ -26,6 +26,30 @@ def _sst(textos):
               f'count="9" uniqueCount="{len(textos)}">{sis}</sst>')
 
 
+def _estilos_bd1_mapa():
+    """Mapa no formato de _estilos_dominantes com os dominantes da base
+    CORRIGIDA de 15/09 (a anatomia que as rows novas devem herdar)."""
+    mapa = {
+        "A": {"valor": 13, "vazio": 13},
+        "B": {"valor": 55, "vazio": 13},
+        "F": {"valor": 56, "vazio": 39},
+        "G": {"valor": 13, "vazio": 13},
+        "H": {"valor": 13, "vazio": 13},
+        "M": {"valor": 45, "vazio": 45},
+        "O": {"valor": 38, "vazio": 38},
+        "P": {"valor": 30, "vazio": 30},
+        "Q": {"valor": 30, "vazio": 30},
+        "V": {"valor": 34, "vazio": 34},
+    }
+    for c in "CDE":  # datas dd/mm/aaaa
+        mapa[c] = {"valor": 56, "vazio": 56}
+    for c in "IJKLN":  # dinheiro #,##0.00
+        mapa[c] = {"valor": 14, "vazio": 38}
+    for c in "RSTU":  # fórmulas calculadas
+        mapa[c] = {"valor": 32, "vazio": 32}
+    return mapa
+
+
 # ==============================================================================
 # Lógica herdada do core.py (contrato verbatim)
 # ==============================================================================
@@ -80,26 +104,31 @@ def test_strings_compartilhadas_acrescenta_e_conta():
 # Montagem de linhas (BD1 e BD2)
 # ==============================================================================
 def test_linha_bd2_estilos_e_referencias():
-    """Linha nova da BD2 com os MESMOS estilos das linhas existentes: A s=5
-    (fonte escura — s=34 era fonte branca, nome invisível) e C–I s=49
-    (máscara #,##0.00 — s=53 era fundo amarelo sem máscara)."""
+    """Linha nova da BD2 com os estilos DOMINANTES das linhas existentes da
+    base (passados pelo mapa de _estilos_dominantes): A s=5, B data s=15,
+    C–I s=43, J s=53 — os índices fixos antigos (34/16/49/17) quebraram na
+    reestilização de 15/09."""
     s = ie._StringsCompartilhadas(_sst(["ALGUM CONVÊNIO"]))
+    estilos = {"A": {"valor": 5, "vazio": 5}, "B": {"valor": 15, "vazio": 15},
+               "C": {"valor": 43, "vazio": 43}, "J": {"valor": 53, "vazio": 53}}
     linha = ie._linha_bd2(806, "ALGUM CONVÊNIO", 45001,
-                          [1.5, 2.0, None, 1000, 0.0, 0.0, 0.0], s)
+                          [1.5, 2.0, None, 1000, 0.0, 0.0, 0.0], s, estilos)
     assert '<row r="806">' in linha
     assert '<c r="A806" s="5" t="s"><v>0</v></c>' in linha
-    assert '<c r="B806" s="16"><v>45001</v></c>' in linha
-    assert '<c r="C806" s="49"><v>1.5</v></c>' in linha
-    assert '<c r="D806" s="49"><v>2</v></c>' in linha
-    assert '<c r="E806" s="49"/>' in linha
-    assert '<c r="J806" s="17"><v>1</v></c>' in linha
+    assert '<c r="B806" s="15"><v>45001</v></c>' in linha
+    assert '<c r="C806" s="43"><v>1.5</v></c>' in linha
+    assert '<c r="D806" s="43"><v>2</v></c>' in linha
+    assert '<c r="E806" s="43"/>' in linha
+    assert '<c r="J806" s="53"><v>1</v></c>' in linha
 
 
 def test_linha_bd1_formulas_e_cache_da_coluna_v():
-    """Linha nova da BD1 com os estilos das linhas EXISTENTES (dominantes da
-    base): A s=54, B s=55, C-F s=57 (F vazio s=58), M/O s=32, P/Q s=33,
-    R-U s=35, V s=37 — o mapa antigo (36/45/46/38/39/41/43) trazia fundo
-    amarelo em A/M/O e fonte branca em B/P/Q."""
+    """Linha nova da BD1 com os estilos DOMINANTES da base (mapa de
+    _estilos_dominantes): célula escrita usa o estilo "valor" da coluna,
+    célula deixada vazia usa o "vazio" — A s=13, B s=55, C–E s=56, F vazio
+    s=39, G s=13, H s=13, I–L/N s=14, M s=45, O s=38, P/Q s=30, R–U s=32,
+    V s=34. Os índices fixos antigos (54/57/58/32/33/35/37) apontam para
+    cellXfs de fonte branca/máscara errada na base reestilizada de 15/09."""
     s = ie._StringsCompartilhadas(_sst(["HOSPITAL ABC"]))
     dados = {"Remessa": "139159 (R)", "Protocolo": 118,
              "Emissão": date(2026, 8, 31), "Vencimento": date(2026, 9, 30),
@@ -107,22 +136,23 @@ def test_linha_bd1_formulas_e_cache_da_coluna_v():
              "Convênio": "HOSPITAL ABC", "Faturado": 100.0, "Valor Pago": 100.0,
              "Valor ISS": 5.0, "Vlr Guia": 100.0, "% Pré-glosa": 0.0,
              "Valor Glosa": 0.0, "% Glosa": 0.0, "Atraso": 0.0, "Faturas": 1.0}
-    linha, refs = ie._linha_bd1_nova(34112, dados, s)
+    linha, refs = ie._linha_bd1_nova(34112, dados, s, _estilos_bd1_mapa())
     serial_emissao = (date(2026, 8, 31) - ie.SERIAL_EPOCA).days
     assert refs == 2  # A (string) + H (convênio)
     # a remessa "139159 (R)" é acrescentada ao fim (índice 1); H usa o índice 0
-    assert '<c r="A34112" s="54" t="s"><v>1</v></c>' in linha
+    assert '<c r="A34112" s="13" t="s"><v>1</v></c>' in linha
     assert '<c r="B34112" s="55"><v>118</v></c>' in linha
-    assert f'<c r="C34112" s="57"><v>{serial_emissao}</v></c>' in linha
-    assert '<c r="E34112" s="57"/>' in linha   # Entrega vazia
-    assert '<c r="F34112" s="58"/>' in linha   # Baixa vazia usa s=58
-    assert '<c r="M34112" s="32"><v>0</v></c>' in linha
-    assert '<c r="O34112" s="32"><v>0</v></c>' in linha
-    assert '<c r="P34112" s="33"><v>0</v></c>' in linha
-    assert '<c r="H34112" s="14" t="s"><v>0</v></c>' in linha
-    assert ('<c r="R34112" s="35"><f>=SUMIFS(L34112,D34112,"&lt;"&amp;TODAY(),F34112,"")</f></c>'
+    assert f'<c r="C34112" s="56"><v>{serial_emissao}</v></c>' in linha
+    assert '<c r="E34112" s="56"/>' in linha   # Entrega vazia
+    assert '<c r="F34112" s="39"/>' in linha   # Baixa vazia usa o estilo "vazio" da F
+    assert '<c r="G34112" s="13"/>' in linha   # NF vazia
+    assert '<c r="M34112" s="45"><v>0</v></c>' in linha
+    assert '<c r="O34112" s="38"><v>0</v></c>' in linha
+    assert '<c r="P34112" s="30"><v>0</v></c>' in linha
+    assert '<c r="H34112" s="13" t="s"><v>0</v></c>' in linha
+    assert ('<c r="R34112" s="32"><f>=SUMIFS(L34112,D34112,"&lt;"&amp;TODAY(),F34112,"")</f></c>'
             in linha)
-    assert ('<c r="V34112" s="37" t="str"><f>=IF(RIGHT(A34112,3)="(R)","Recurso","Comum")</f><v>Recurso</v></c>'
+    assert ('<c r="V34112" s="34" t="str"><f>=IF(RIGHT(A34112,3)="(R)","Recurso","Comum")</f><v>Recurso</v></c>'
             in linha)
 
 
@@ -207,12 +237,157 @@ def test_linha_bd1_remessa_numerica_sem_string():
              "Convênio": "HOSPITAL ABC", "Faturado": 100.0, "Valor Pago": 100.0,
              "Valor ISS": 5.0, "Vlr Guia": 100.0, "% Pré-glosa": 0.0,
              "Valor Glosa": 0.0, "% Glosa": 0.0, "Atraso": 0.0, "Faturas": 1.0}
-    linha, refs = ie._linha_bd1_nova(34113, dados, s)
+    linha, refs = ie._linha_bd1_nova(34113, dados, s, _estilos_bd1_mapa())
     assert refs == 1  # só o H é string
-    assert '<c r="A34113" s="54"><v>200001</v></c>' in linha
+    assert '<c r="A34113" s="13"><v>200001</v></c>' in linha
     assert '<c r="B34113" s="55" t="str"><v>118-A</v></c>' in linha
-    assert '<c r="V34113" s="37" t="str">' in linha
+    assert '<c r="V34113" s="34" t="str">' in linha
     assert '<v>Comum</v>' in linha  # cache da V para remessa numérica
+
+
+# ==============================================================================
+# Derivação de estilos da própria base (fix da reestilização de 15/09)
+# ==============================================================================
+def test_estilos_dominantes_separa_celulas_com_valor_e_vazias():
+    """Deriva o estilo dominante POR COLUNA e por estado (com valor x vazia),
+    ignorando o cabeçalho (linha 1) e contando células sem s= como estilo 0."""
+    xml = (DECL
+           + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+           + '<sheetData>'
+           + '<row r="1"><c r="J1" s="99"><v>1</v></c></row>'      # cabeçalho ignorado
+           + '<row r="2"><c r="B2" s="55"><v>1</v></c><c r="F2" s="56"><v>2</v></c>'
+           + '<c r="H2" s="13" t="s"><v>0</v></c><c r="G2"><v>1</v></c></row>'
+           + '<row r="3"><c r="B3" s="55"><v>1</v></c><c r="F3" s="39"/>'
+           + '<c r="H3" s="13" t="s"><v>0</v></c><c r="G3"><v></v></c></row>'
+           + '<row r="4"><c r="B4" s="13"/><c r="F4" s="39"/><c r="G4"/></row>'
+           + '</sheetData>'
+           + '</worksheet>')
+    e = ie._estilos_dominantes(xml, "BFGHJ")
+    assert e["B"] == {"valor": 55, "vazio": 13}
+    assert e["F"] == {"valor": 56, "vazio": 39}
+    assert e["H"] == {"valor": 13, "vazio": 13}   # vazio cai no valor (única amostra)
+    assert e["G"] == {"valor": 0, "vazio": 0}     # <v></v> e célula vazia contam como vazias
+    assert e["J"] == {"valor": 0, "vazio": 0}     # só o cabeçalho tem J — cai no padrão 0
+
+
+def test_estilos_dominantes_formula_conta_como_valor():
+    """Célula com <f> (fórmula) conta como "valor" — R–U/V têm fórmulas."""
+    xml = (DECL
+           + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+           + '<sheetData>'
+           + '<row r="2"><c r="R2" s="32"><f>SUMIFS(L2,D2,"&lt;"&amp;TODAY(),F2,"")</f><v>0</v></c>'
+           + '<c r="V2" s="34" t="str"><f>IF(RIGHT(A2,3)="(R)","Recurso","Comum")</f><v>Comum</v></c></row>'
+           + '</sheetData>'
+           + '</worksheet>')
+    e = ie._estilos_dominantes(xml, "RV")
+    assert e["R"] == {"valor": 32, "vazio": 32}
+    assert e["V"] == {"valor": 34, "vazio": 34}
+
+
+def test_editar_bd1_linhas_novas_herdam_estilos_da_base_nova():
+    """A reestilização de 15/09 REMAPEou os índices dos cellXfs — os índices
+    fixos antigos passaram a apontar para xfs de fonte branca/máscara errada.
+    As rows novas devem herdar os estilos DOMINANTES da própria base de
+    entrada, coluna a coluna (valor x vazio), e não índices fixos."""
+    s = ie._StringsCompartilhadas(_sst(["CAB", "AMIL", "GEAP"]))
+    SER_2026 = (date(2026, 1, 2) - ie.SERIAL_EPOCA).days
+
+    def row_base(n, conv_idx, baixa):
+        cels = [f'<c r="A{n}" s="13"><v>{n}</v></c>',
+                f'<c r="B{n}" s="55"><v>1</v></c>',
+                f'<c r="C{n}" s="56"><v>{SER_2026}</v></c>',
+                f'<c r="D{n}" s="56"><v>{SER_2026 + 30}</v></c>',
+                f'<c r="E{n}" s="56"><v>{SER_2026}</v></c>',
+                (f'<c r="F{n}" s="56"><v>{SER_2026 + 30}</v></c>'
+                 if baixa else f'<c r="F{n}" s="39"/>'),
+                f'<c r="G{n}" s="13"/>',
+                f'<c r="H{n}" s="13" t="s"><v>{conv_idx}</v></c>',
+                f'<c r="I{n}" s="14"><v>1</v></c>',
+                f'<c r="J{n}" s="14"><v>1</v></c>',
+                f'<c r="K{n}" s="14"><v>1</v></c>',
+                f'<c r="L{n}" s="14"><v>1</v></c>',
+                f'<c r="M{n}" s="45"><v>0</v></c>',
+                f'<c r="N{n}" s="14"><v>0</v></c>',
+                f'<c r="O{n}" s="38"><v>0</v></c>',
+                f'<c r="P{n}" s="30"><v>0</v></c>',
+                f'<c r="Q{n}" s="30"><v>0</v></c>',
+                f'<c r="R{n}" s="32"><f>SUMIFS(L{n},D{n},"&lt;"&amp;TODAY(),F{n},"")</f><v>0</v></c>',
+                f'<c r="S{n}" s="32"><f>SUMIFS(L{n},D{n},"&gt;"&amp;TODAY(),F{n},"")</f><v>0</v></c>',
+                f'<c r="T{n}" s="32"><f>IF(RIGHT(A{n},3)="(R)",L{n},0)</f><v>0</v></c>',
+                f'<c r="U{n}" s="32"><f>IF(T{n}=0,0,J{n})</f><v>0</v></c>',
+                f'<c r="V{n}" s="34" t="str"><f>IF(RIGHT(A{n},3)="(R)","Recurso","Comum")</f><v>Comum</v></c>']
+        return f'<row r="{n}">{"".join(cels)}</row>'
+
+    xml = (DECL
+           + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+           + '<dimension ref="A1:V3"/>'
+           + '<sheetData>'
+           + '<row r="1"><c r="A1" t="s"><v>0</v></c></row>'
+           + row_base(2, 1, baixa=True) + row_base(3, 2, baixa=False)
+           + '</sheetData>'
+           + '</worksheet>')
+    novas = pd.DataFrame({
+        "Remessa": [101], "Protocolo": [1],
+        "Emissão": [datetime(2026, 1, 1)], "Vencimento": [datetime(2026, 2, 1)],
+        "Entrega": [None], "Baixa": [None], "Nota Fiscal": [None],
+        "Convênio": ["AMIL"], "Faturado": [10.0], "Valor Pago": [10.0],
+        "Valor ISS": [0.0], "Vlr Guia": [10.0], "% Pré-glosa": [0.0],
+        "Valor Glosa": [0.0], "% Glosa": [0.0], "Atraso": [0.0], "Faturas": [1.0],
+    })
+    xml_novo, fim, refs, posicoes = ie._editar_bd1(xml, novas, s)
+    assert fim == 4
+    linhas = re.findall(r'<row r="(\d+)">(.*?)</row>', xml_novo, re.S)
+    nova = {int(n): corpo for n, corpo in linhas}[3]
+    serial_nova = (date(2026, 1, 1) - ie.SERIAL_EPOCA).days
+    assert '<c r="A3" s="13"><v>101</v></c>' in nova
+    assert '<c r="B3" s="55"><v>1</v></c>' in nova
+    assert f'<c r="C3" s="56"><v>{serial_nova}</v></c>' in nova
+    assert '<c r="E3" s="56"/>' in nova          # Entrega vazia
+    assert '<c r="F3" s="39"/>' in nova          # Baixa vazia usa o "vazio" da F
+    assert '<c r="G3" s="13"/>' in nova
+    assert '<c r="H3" s="13" t="s"><v>1</v></c>' in nova   # AMIL
+    assert '<c r="I3" s="14"><v>10</v></c>' in nova
+    assert '<c r="M3" s="45"><v>0</v></c>' in nova
+    assert '<c r="O3" s="38"><v>0</v></c>' in nova
+    assert '<c r="P3" s="30"><v>0</v></c>' in nova
+    assert '<c r="R3" s="32">' in nova
+    assert '<c r="V3" s="34" t="str">' in nova
+    assert '<v>Comum</v>' in nova                 # remessa numérica → cache Comum
+
+
+def test_upsert_bd1_celula_vazia_recebe_estilo_dominante_da_coluna():
+    """O upsert de baixa/valores cria células vazias com o estilo DOMINANTE da
+    coluna (F data s=56, I dinheiro s=14) — não os índices fixos 57/15."""
+    s = ie._StringsCompartilhadas(_sst(["CAB", "AMIL"]))
+    SER_2026 = (date(2026, 1, 2) - ie.SERIAL_EPOCA).days
+    row2 = ('<row r="2"><c r="A2" s="13"><v>2</v></c>'
+            f'<c r="F2" s="56"><v>{SER_2026}</v></c>'
+            '<c r="I2" s="14"><v>1</v></c></row>')
+    row3 = ('<row r="3"><c r="A3" s="13"><v>3</v></c>'
+            '<c r="F3" s="39"/>'
+            '<c r="I3" s="38"/></row>')
+    xml = (DECL
+           + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+           + '<dimension ref="A1:V3"/>'
+           + '<sheetData>'
+           + '<row r="1"><c r="A1" t="s"><v>0</v></c></row>'
+           + row2 + row3
+           + '</sheetData>'
+           + '</worksheet>')
+    df = pd.DataFrame({
+        "Remessa": [3.0], "Protocolo": [1], "Emissão": [datetime(2026, 1, 1)],
+        "Vencimento": [datetime(2026, 2, 1)], "Entrega": [None],
+        "Baixa": [datetime(2026, 1, 5)], "Nota Fiscal": [None], "Convênio": ["AMIL"],
+        "Faturado": [9.0], "Valor Pago": [None], "Valor ISS": [None],
+        "Vlr Guia": [None], "% Pré-glosa": [None], "Valor Glosa": [None],
+        "% Glosa": [None], "Atraso": [None], "Faturas": [None],
+    })
+    xml_novo, mudancas, n = ie._upsert_bd1(xml, df, {"3"}, s)
+    assert n == 2  # só F (baixa) e I (faturado)
+    serial_baixa = (date(2026, 1, 5) - ie.SERIAL_EPOCA).days
+    assert f'<c r="F3" s="56"><v>{serial_baixa}</v></c>' in xml_novo
+    assert '<c r="I3" s="14"><v>9</v></c>' in xml_novo
+    assert mudancas[0]["campos"] == ["Baixa", "Faturado"]
 
 
 # ==============================================================================
@@ -224,10 +399,13 @@ XML_BD2_MINI = (
     + '<dimension ref="A1:J808"/>'
     + '<sheetData>'
     + '<row r="1" spans="1:10"><c r="A1" s="34" t="s"><v>0</v></c></row>'
-    + '<row r="2" spans="1:10"><c r="A2" s="34" t="s"><v>1</v></c><c r="B2" s="35"><v>45000</v></c></row>'
-    + '<row r="805" spans="1:10"><c r="A805" s="34" t="s"><v>1</v></c></row>'
-    + '<row r="806" spans="1:10"><c r="A806" s="5" t="s"><v>2</v></c></row>'
-    + '<row r="808" spans="1:10"><c r="A808" s="16"><v>7</v></c></row>'
+    + '<row r="2" spans="1:10"><c r="A2" s="5" t="s"><v>1</v></c><c r="B2" s="15"><v>45000</v></c>'
+    + '<c r="C2" s="43"><v>1</v></c><c r="D2" s="43"><v>2</v></c><c r="E2" s="43"><v>3</v></c>'
+    + '<c r="F2" s="43"><v>4</v></c><c r="G2" s="43"><v>5</v></c><c r="H2" s="43"><v>6</v></c>'
+    + '<c r="I2" s="43"><v>7</v></c><c r="J2" s="53"><v>1</v></c></row>'
+    + '<row r="805" spans="1:10"><c r="A805" s="5" t="s"><v>1</v></c><c r="B805" s="15"><v>1</v></c></row>'
+    + '<row r="806" spans="1:10"><c r="A806" s="5" t="s"><v>2</v></c><c r="B806" s="15"><v>1</v></c></row>'
+    + '<row r="808" spans="1:10"><c r="A808" s="16"><v>7</v></c><c r="B808" s="15"><v>1</v></c></row>'
     + '</sheetData>'
     + '</worksheet>'
 )
@@ -252,18 +430,18 @@ def test_editar_bd2_preserva_base_deduplica_e_insere():
     assert atualizacoes[0]["linha"] == 2 and atualizacoes[0]["record"] == 0
     assert atualizacoes[0]["valores"] == ["9"] * 7
     assert mapeamento == {"Convênio ": "Convênio"}
-    assert '<c r="C2" s="49"><v>9</v></c>' in xml   # upsert na linha 2
+    assert '<c r="C2" s="43"><v>9</v></c>' in xml   # upsert na linha 2
     # todas as linhas da base preservadas (deslocadas +1 pela inserção)
     assert '<c r="A807" s="5"' in xml    # a 806 original
     assert '<c r="A809"' in xml          # a 808 original
     # coluna A normalizada: "Convênio " -> "Convênio" (si novo = índice 3)
-    assert '<c r="A2" s="34" t="s"><v>3</v></c>' in xml
-    assert '<c r="A806" s="34" t="s"><v>3</v></c>' in xml   # 805 deslocada +1
+    assert '<c r="A2" s="5" t="s"><v>3</v></c>' in xml
+    assert '<c r="A806" s="5" t="s"><v>3</v></c>' in xml   # 805 deslocada +1
     # linha nova entra na POSIÇÃO ordenada do bloco do seu ano (após a linha 2,
-    # única do ano 2023), com a data em estilo mm-dd-yy
+    # única do ano 2023), com os estilos dominantes derivados da própria base
     assert '<c r="A3" s="5" t="s"><v>3</v></c>' in xml
-    assert '<c r="B3" s="16"><v>45001</v></c>' in xml
-    assert '<c r="J3" s="17"><v>1</v></c>' in xml
+    assert '<c r="B3" s="15"><v>45001</v></c>' in xml
+    assert '<c r="J3" s="53"><v>1</v></c>' in xml
     # dimension
     assert 'ref="A1:J809"' in xml
     assert 'ref="A1:J808"' not in xml
@@ -277,7 +455,7 @@ def test_editar_bd2_upsert_atualiza_linha_com_chave_existente():
     xml, fim, novas_celulas, mapeamento, novas, atualizacoes = ie._editar_bd2(
         XML_BD2_MINI,
         [{"convenio": "Convênio", "data": 45000,   # chave da linha 2 existente
-          "valores": [9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0]}],
+          "valores": [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0]}],  # ≠ 1..7 da linha 2
         s)
     assert fim == 808                        # nenhuma linha nova
     assert novas_celulas == 0
@@ -287,12 +465,12 @@ def test_editar_bd2_upsert_atualiza_linha_com_chave_existente():
     att = atualizacoes[0]
     assert att["linha"] == 2
     assert att["record"] == 0                # record 0 = linha 2
-    assert att["valores"] == ["9", "8", "7", "6", "5", "4", "3"]
-    # células C2:I2 ganham os novos valores (s="49" como as numéricas da BD2)
-    assert '<c r="C2" s="49"><v>9</v></c>' in xml
-    assert '<c r="I2" s="49"><v>3</v></c>' in xml
-    assert '<c r="A2" s="34" t="s"><v>3</v></c>' in xml   # convênio normalizado
-    assert '<c r="B2" s="35"><v>45000</v></c>' in xml     # data preservada
+    assert att["valores"] == ["10", "20", "30", "40", "50", "60", "70"]
+    # células C2:I2 ganham os novos valores (s="43" como as numéricas da BD2)
+    assert '<c r="C2" s="43"><v>10</v></c>' in xml
+    assert '<c r="I2" s="43"><v>70</v></c>' in xml
+    assert '<c r="A2" s="5" t="s"><v>3</v></c>' in xml    # convênio normalizado
+    assert '<c r="B2" s="15"><v>45000</v></c>' in xml     # data preservada
     assert 'ref="A1:J808"' in xml
 
 
@@ -330,10 +508,10 @@ def test_editar_bd2_upsert_nao_toca_string_nem_repr_de_float():
                 + '<dimension ref="A1:J2"/>'
                 + '<sheetData>'
                 + '<row r="1" spans="1:10"><c r="A1" s="34" t="s"><v>0</v></c></row>'
-                + '<row r="2" spans="1:10"><c r="A2" s="34" t="s"><v>1</v></c>'
-                + '<c r="B2" s="35"><v>45000</v></c>'
-                + '<c r="C2" s="49"><v>610.41999999999996</v></c>'
-                + '<c r="E2" s="49" t="s"><v>107</v></c></row>'
+                + '<row r="2" spans="1:10"><c r="A2" s="5" t="s"><v>1</v></c>'
+                + '<c r="B2" s="15"><v>45000</v></c>'
+                + '<c r="C2" s="43"><v>610.41999999999996</v></c>'
+                + '<c r="E2" s="43" t="s"><v>107</v></c></row>'
                 + '</sheetData>'
                 + '</worksheet>')
     s = ie._StringsCompartilhadas(_sst(["CABEÇALHO", "Convênio"]))
@@ -346,16 +524,17 @@ def test_editar_bd2_upsert_nao_toca_string_nem_repr_de_float():
     assert novas == [] and nc == 0
     assert len(atts) == 1
     assert atts[0]["valores"] == [None, "9", None, None, None, None, None]
-    assert '<c r="C2" s="49"><v>610.41999999999996</v></c>' in xml  # repr intocado
-    assert '<c r="E2" s="49" t="s"><v>107</v></c>' in xml             # string intocada
-    assert '<c r="D2" s="49"><v>9</v></c>' in xml                     # ausente criada
+    assert '<c r="C2" s="43"><v>610.41999999999996</v></c>' in xml  # repr intocado
+    assert '<c r="E2" s="43" t="s"><v>107</v></c>' in xml             # string intocada
+    assert '<c r="D2" s="43"><v>9</v></c>' in xml                     # ausente criada
 
 
 def test_editar_bd2_quitacao_converte_string_de_espacos_em_numero():
     """Quitação registrada no NI (valor ≠ 0) em célula t='s' de espaços deve
-    converter a célula para número s=49 — defeito de 11/09: as quitações de
-    02/09 (10,69 / 17.151,47 / 18.730) não apareciam na BD2. String de espaços
-    com NI=0 (vazio histórico) e string com conteúdo real ficam intocadas."""
+    converter a célula para número com o estilo dominante da coluna C (s=43
+    nesta base) — defeito de 11/09: as quitações de 02/09 (10,69 / 17.151,47
+    / 18.730) não apareciam na BD2. String de espaços com NI=0 (vazio
+    histórico) e string com conteúdo real ficam intocadas."""
     s = ie._StringsCompartilhadas(
         _sst(["CABEÇALHO", "Convênio", "              ", "TEXTO REAL"]))
     xml_base = (DECL
@@ -364,10 +543,11 @@ def test_editar_bd2_quitacao_converte_string_de_espacos_em_numero():
                 + '<sheetData>'
                 + '<row r="1" spans="1:10"><c r="A1" s="34" t="s"><v>0</v></c></row>'
                 + '<row r="2" spans="1:10"><c r="A2" s="5" t="s"><v>1</v></c>'
-                + '<c r="B2" s="16"><v>45000</v></c>'
-                + '<c r="E2" s="49" t="s"><v>2</v></c>'      # espaços
-                + '<c r="G2" s="49" t="s"><v>3</v></c>'      # texto real
-                + '<c r="H2" s="49" t="s"><v>2</v></c></row>'  # espaços
+                + '<c r="B2" s="15"><v>45000</v></c>'
+                + '<c r="C2" s="43"><v>1</v></c>'
+                + '<c r="E2" s="43" t="s"><v>2</v></c>'      # espaços
+                + '<c r="G2" s="43" t="s"><v>3</v></c>'      # texto real
+                + '<c r="H2" s="43" t="s"><v>2</v></c></row>'  # espaços
                 + '</sheetData>'
                 + '</worksheet>')
     xml, fim, nc, mapa, novas, atts = ie._editar_bd2(
@@ -378,13 +558,24 @@ def test_editar_bd2_quitacao_converte_string_de_espacos_em_numero():
     assert fim == 2
     assert novas == [] and nc == 0
     assert len(atts) == 1
-    # E: espaços + NI=10,69 -> número s=49 (a quitação aparece)
-    assert '<c r="E2" s="49"><v>10.69</v></c>' in xml
+    # E: espaços + NI=10,69 -> número s=43 (a quitação aparece)
+    assert '<c r="E2" s="43"><v>10.69</v></c>' in xml
     # H: espaços + NI=0 -> intocada; G: texto real -> intocada
-    assert '<c r="H2" s="49" t="s"><v>2</v></c>' in xml
-    assert '<c r="G2" s="49" t="s"><v>3</v></c>' in xml
+    assert '<c r="H2" s="43" t="s"><v>2</v></c>' in xml
+    assert '<c r="G2" s="43" t="s"><v>3</v></c>' in xml
     assert atts[0]["valores"][2] == "10.69"       # E entra no upsert do record
     assert atts[0]["valores"][5] is None          # H fora
+
+
+def test_upsert_c_i_usa_estilo_derivado_da_base():
+    """A conversão t='s'→número e a criação de células ausentes usam o estilo
+    dominante da coluna C da própria base (estilo_ci), não o índice fixo 49."""
+    corpo = ('<c r="C2" s="43" t="s"><v>1</v></c>'   # string de espaços
+             '<c r="D2" s="43"><v>2</v></c>')        # numérica igual fica
+    novo = ie._upsert_c_i(corpo, 2, ["9", "2", "3"], estilo_ci=43)
+    assert '<c r="C2" s="43"><v>9</v></c>' in novo   # convertida
+    assert '<c r="D2" s="43"><v>2</v></c>' in novo   # intocada
+    assert '<c r="E2" s="43"><v>3</v></c>' in novo   # criada com o estilo derivado
 
 
 def test_editar_bd2_novas_entram_ordenadas_no_bloco_do_ano():
@@ -635,25 +826,33 @@ def _criar_base(tmp_path, sem_dimension_bd2=False):
     cel_bd1_header = "".join(f'<c r="{c}1" t="s"><v>{i}</v></c>'
                              for i, c in enumerate(letras_bd1))
     row2_bd1 = ('<row r="2">'
-                '<c r="A2"><v>117129</v></c>'
-                '<c r="B2"><v>118</v></c>'
-                f'<c r="C2"><v>{ser_ago}</v></c>'
-                f'<c r="D2"><v>{ser_set}</v></c>'
-                '<c r="H2" t="s"><v>22</v></c>'          # HOSPITAL ABC
-                '<c r="I2"><v>100</v></c><c r="J2"><v>100</v></c><c r="K2"><v>5</v></c>'
-                '<c r="L2"><v>100</v></c><c r="M2"><v>0</v></c><c r="N2"><v>0</v></c>'
-                '<c r="O2"><v>0</v></c><c r="P2"><v>0</v></c><c r="Q2"><v>1</v></c>'
+                '<c r="A2" s="13"><v>117129</v></c>'
+                '<c r="B2" s="55"><v>118</v></c>'
+                f'<c r="C2" s="56"><v>{ser_ago}</v></c>'
+                f'<c r="D2" s="56"><v>{ser_set}</v></c>'
+                f'<c r="E2" s="56"><v>{ser_ago}</v></c>'
+                '<c r="F2" s="39"/>'
+                '<c r="G2" s="13"/>'
+                '<c r="H2" s="13" t="s"><v>22</v></c>'   # HOSPITAL ABC
+                '<c r="I2" s="14"><v>100</v></c><c r="J2" s="14"><v>100</v></c><c r="K2" s="14"><v>5</v></c>'
+                '<c r="L2" s="14"><v>100</v></c><c r="M2" s="45"><v>0</v></c><c r="N2" s="14"><v>0</v></c>'
+                '<c r="O2" s="38"><v>0</v></c><c r="P2" s="30"><v>0</v></c><c r="Q2" s="30"><v>1</v></c>'
+                '<c r="R2" s="32"><f>SUMIFS(L2,D2,"&lt;"&amp;TODAY(),F2,"")</f><v>0</v></c>'
+                '<c r="S2" s="32"><f>SUMIFS(L2,D2,"&gt;"&amp;TODAY(),F2,"")</f><v>0</v></c>'
+                '<c r="T2" s="32"><f>IF(RIGHT(A2,3)="(R)",L2,0)</f><v>0</v></c>'
+                '<c r="U2" s="32"><f>IF(T2=0,0,J2)</f><v>0</v></c>'
+                '<c r="V2" s="34" t="str"><f>IF(RIGHT(A2,3)="(R)","Recurso","Comum")</f><v>Comum</v></c>'
                 '</row>')
 
     letras_bd2 = "ABCDEFGHIJ"
     cel_bd2_header = "".join(f'<c r="{c}1" t="s"><v>{24 + i}</v></c>'
                              for i, c in enumerate(letras_bd2))
     row2_bd2 = ('<row r="2">'
-                '<c r="A2" t="s"><v>23</v></c>'          # "Convênio Z "
-                f'<c r="B2"><v>{ser_ago}</v></c>'
-                + "".join(f'<c r="{c}2"><v>{n}</v></c>'
+                '<c r="A2" s="5" t="s"><v>23</v></c>'    # "Convênio Z "
+                f'<c r="B2" s="15"><v>{ser_ago}</v></c>'
+                + "".join(f'<c r="{c}2" s="43"><v>{n}</v></c>'
                           for c, n in zip("CDEFGHI", [1, 2, 3, 4, 5, 6, 7]))
-                + '<c r="J2"><v>1</v></c>'
+                + '<c r="J2" s="53"><v>1</v></c>'
                 + '</row>')
 
     ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
@@ -998,10 +1197,11 @@ def test_processamento_completo(tmp_path):
         assert 'refreshOnLoad' not in zf.read("xl/workbook.xml").decode("utf-8")
         assert set(zf.namelist()) == set(zb.namelist())   # nenhuma parte criada/removida
         # fórmula da V com cache inline (openpyxl devolve a fórmula, não o cache)
+        # — o estilo é o dominante DERIVADO da coluna V da própria base (s=34)
         sheet5_final = zf.read("xl/worksheets/sheet5.xml").decode("utf-8")
-        assert ('<c r="V3" s="37" t="str"><f>=IF(RIGHT(A3,3)="(R)","Recurso","Comum")</f><v>Comum</v></c>'
+        assert ('<c r="V3" s="34" t="str"><f>=IF(RIGHT(A3,3)="(R)","Recurso","Comum")</f><v>Comum</v></c>'
                 in sheet5_final)
-        assert ('<c r="V4" s="37" t="str"><f>=IF(RIGHT(A4,3)="(R)","Recurso","Comum")</f><v>Recurso</v></c>'
+        assert ('<c r="V4" s="34" t="str"><f>=IF(RIGHT(A4,3)="(R)","Recurso","Comum")</f><v>Recurso</v></c>'
                 in sheet5_final)
 
         # arquivo gerado abre no topo: topLeftCell = ponto de congelamento

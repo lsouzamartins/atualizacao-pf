@@ -19,6 +19,7 @@ Contrato público (consumido por integracao_runner.py):
                                xlsx_hias_final, pasta_raiz, pasta_saida,
                                xlsx_wpd_limpo) -> None
 =============================================================================="""
+from collections import Counter
 import numbers
 import os
 import re
@@ -302,59 +303,101 @@ def _converter_linha_wpd(linha) -> dict:
     return dados
 
 
-def _linha_bd1_nova(num_linha: int, dados: dict, strings) -> tuple[str, int]:
+_RE_CEL_STYLE = re.compile(r'<c r="([A-Z]{1,2})\d+"([^>]*?)(/>|>(.*?)</c>)',
+                           flags=re.DOTALL)
+
+
+def _estilos_dominantes(xml: str, colunas: str, padrao: int = 0) -> dict:
+    """{col: {"valor": s, "vazio": s}} — o estilo DOMINANTE de cada coluna nas
+    linhas >= 2 da planilha, separando células COM conteúdo (<v> não vazio ou
+    <f>) das vazias (<c .../> ou <v></v>). As rows novas e as células criadas
+    nos upserts herdam o MESMO visual das linhas existentes da PRÓPRIA base:
+    os índices fixos quebraram na reestilização de 15/09 (as posições dos
+    cellXfs mudaram — as rows saíram com fonte branca e máscara trocada).
+    Células sem s= contam como estilo 0; coluna sem amostra cai no padrão."""
+    por_col = {c: {"conteudo": Counter(), "vazio": Counter()} for c in colunas}
+    for m in re.finditer(r'<row r="(\d+)"[^>]*>(.*?)</row>', xml, flags=re.DOTALL):
+        if int(m.group(1)) < 2:
+            continue
+        for cm in _RE_CEL_STYLE.finditer(m.group(2)):
+            # grupo 2 = atributos; grupo 3 = `/>` ou `>...</c>`; grupo 4 = corpo
+            col, attrs, corpo = cm.group(1), cm.group(2) or "", cm.group(4)
+            if col not in por_col:
+                continue
+            s = re.search(r'\bs="(\d+)"', attrs)
+            idx = int(s.group(1)) if s else 0
+            if corpo is not None and (re.search(r"<v>[^<\s]", corpo) or "<f" in corpo):
+                por_col[col]["conteudo"][idx] += 1
+            else:
+                por_col[col]["vazio"][idx] += 1
+
+    def _dominante(preferido, reserva):
+        if preferido:
+            return max(preferido.items(), key=lambda kv: kv[1])[0]
+        if reserva:
+            return max(reserva.items(), key=lambda kv: kv[1])[0]
+        return padrao
+
+    return {c: {"valor": _dominante(por_col[c]["conteudo"], por_col[c]["vazio"]),
+                "vazio": _dominante(por_col[c]["vazio"], por_col[c]["conteudo"])}
+            for c in colunas}
+
+
+def _linha_bd1_nova(num_linha: int, dados: dict, strings, estilos: dict) -> tuple[str, int]:
     """Uma <row> nova da BD1 com os estilos DOMINANTES das linhas existentes
-    da base (A 54, B 55, C-F 57, F vazio 58, G/H 14, I-L/N 15, M/O 32,
-    P/Q 33, R-U 35, V 37) e fórmulas R–V sem grupo compartilhado. O mapa
-    antigo (36/45/46/38/39/41/43) trazia fundo amarelo em A/M/O e fonte
-    branca em B/P/Q. Retorna (xml_da_linha, nº de células t="s" novas)."""
+    da base (mapa de _estilos_dominantes: células escritas usam o estilo
+    "valor" da coluna; células deixadas vazias usam o "vazio") e fórmulas
+    R–V sem grupo compartilhado. Retorna (xml_da_linha, nº de células t="s"
+    novas)."""
     refs = 0
     remessa = dados["Remessa"]
     recurso = str(remessa).strip().endswith("(R)")
     if pd.api.types.is_number(remessa):
         numero = int(remessa) if float(remessa).is_integer() else float(remessa)
-        cel_a = _celula(f"A{num_linha}", 54, _numero(numero))
+        cel_a = _celula(f"A{num_linha}", estilos["A"]["valor"], _numero(numero))
     else:
         refs += 1
-        cel_a = _celula(f"A{num_linha}", 54, str(strings.obter_indice(str(remessa))), tipo="s")
+        cel_a = _celula(f"A{num_linha}", estilos["A"]["valor"],
+                        str(strings.obter_indice(str(remessa))), tipo="s")
     protocolo = dados["Protocolo"]
-    cel_b = (_celula(f"B{num_linha}", 55, protocolo, tipo="str")
+    cel_b = (_celula(f"B{num_linha}", estilos["B"]["valor"], protocolo, tipo="str")
              if isinstance(protocolo, str)
-             else _celula(f"B{num_linha}", 55, _numero(protocolo)))
+             else _celula(f"B{num_linha}", estilos["B"]["valor"], _numero(protocolo)))
     convenio = dados["Convênio"]
     refs += 1
-    cel_h = _celula(f"H{num_linha}", 14,
+    cel_h = _celula(f"H{num_linha}", estilos["H"]["valor"],
                     str(strings.obter_indice("" if convenio is None else str(convenio))), tipo="s")
 
     def data_serial(v):
         return None if v is None else (v - SERIAL_EPOCA).days
 
     cels = [cel_a, cel_b,
-            _celula(f"C{num_linha}", 57, _numero(data_serial(dados["Emissão"]))),
-            _celula(f"D{num_linha}", 57, _numero(data_serial(dados["Vencimento"]))),
-            _celula(f"E{num_linha}", 57, _numero(data_serial(dados["Entrega"]))),
-            _celula(f"F{num_linha}", 58 if dados["Baixa"] is None else 57,
+            _celula(f"C{num_linha}", estilos["C"]["valor"], _numero(data_serial(dados["Emissão"]))),
+            _celula(f"D{num_linha}", estilos["D"]["valor"], _numero(data_serial(dados["Vencimento"]))),
+            _celula(f"E{num_linha}", estilos["E"]["vazio" if dados["Entrega"] is None else "valor"],
+                    _numero(data_serial(dados["Entrega"]))),
+            _celula(f"F{num_linha}", estilos["F"]["vazio" if dados["Baixa"] is None else "valor"],
                     _numero(data_serial(dados["Baixa"]))),
-            _celula(f"G{num_linha}", 14, None),
+            _celula(f"G{num_linha}", estilos["G"]["vazio"], None),
             cel_h,
-            _celula(f"I{num_linha}", 15, _numero(dados["Faturado"])),
-            _celula(f"J{num_linha}", 15, _numero(dados["Valor Pago"])),
-            _celula(f"K{num_linha}", 15, _numero(dados["Valor ISS"])),
-            _celula(f"L{num_linha}", 15, _numero(dados["Vlr Guia"])),
-            _celula(f"M{num_linha}", 32, _numero(dados["% Pré-glosa"])),
-            _celula(f"N{num_linha}", 15, _numero(dados["Valor Glosa"])),
-            _celula(f"O{num_linha}", 32, _numero(dados["% Glosa"])),
-            _celula(f"P{num_linha}", 33, _numero(dados["Atraso"])),
-            _celula(f"Q{num_linha}", 33, _numero(dados["Faturas"])),
-            _celula_formula(f"R{num_linha}", 35,
+            _celula(f"I{num_linha}", estilos["I"]["valor"], _numero(dados["Faturado"])),
+            _celula(f"J{num_linha}", estilos["J"]["valor"], _numero(dados["Valor Pago"])),
+            _celula(f"K{num_linha}", estilos["K"]["valor"], _numero(dados["Valor ISS"])),
+            _celula(f"L{num_linha}", estilos["L"]["valor"], _numero(dados["Vlr Guia"])),
+            _celula(f"M{num_linha}", estilos["M"]["valor"], _numero(dados["% Pré-glosa"])),
+            _celula(f"N{num_linha}", estilos["N"]["valor"], _numero(dados["Valor Glosa"])),
+            _celula(f"O{num_linha}", estilos["O"]["valor"], _numero(dados["% Glosa"])),
+            _celula(f"P{num_linha}", estilos["P"]["valor"], _numero(dados["Atraso"])),
+            _celula(f"Q{num_linha}", estilos["Q"]["valor"], _numero(dados["Faturas"])),
+            _celula_formula(f"R{num_linha}", estilos["R"]["valor"],
                             f'=SUMIFS(L{num_linha},D{num_linha},"<"&TODAY(),F{num_linha},"")'),
-            _celula_formula(f"S{num_linha}", 35,
+            _celula_formula(f"S{num_linha}", estilos["S"]["valor"],
                             f'=SUMIFS(L{num_linha},D{num_linha},">"&TODAY(),F{num_linha},"")'),
-            _celula_formula(f"T{num_linha}", 35,
+            _celula_formula(f"T{num_linha}", estilos["T"]["valor"],
                             f'=IF(RIGHT(A{num_linha},3)="(R)",L{num_linha},0)'),
-            _celula_formula(f"U{num_linha}", 35,
+            _celula_formula(f"U{num_linha}", estilos["U"]["valor"],
                             f'=IF(T{num_linha}=0,0,J{num_linha})'),
-            _celula_formula(f"V{num_linha}", 37,
+            _celula_formula(f"V{num_linha}", estilos["V"]["valor"],
                             f'=IF(RIGHT(A{num_linha},3)="(R)","Recurso","Comum")',
                             valor_cache="Recurso" if recurso else "Comum", tipo="str"),
             ]
@@ -423,6 +466,11 @@ def _editar_bd1(xml_bd1: str, novas: pd.DataFrame, strings) -> tuple | None:
     if novas is None or len(novas) == 0:
         return None
     fim_atual = _ultima_linha(xml_bd1)
+
+    # estilos dominantes derivados da PRÓPRIA base (valor x vazio por coluna):
+    # as rows novas herdam o visual das linhas existentes — índices fixos
+    # quebram quando a base é reestilizada (fonte branca/máscara errada)
+    estilos = _estilos_dominantes(xml_bd1, "ABCDEFGHIJKLMNOPQRSTUV")
 
     # as fórmulas COMPARTILHADAS da base não sobrevivem à inserção de rows no
     # meio (os grupos R–V partem e o Excel rejeita) — materializa primeiro
@@ -511,7 +559,7 @@ def _editar_bd1(xml_bd1: str, novas: pd.DataFrame, strings) -> tuple | None:
         else:
             alvo = pos + d(pos) + sum(1 for pj, _ in insercoes[:i] if pj == pos)
             final = alvo + 1
-        xml_linha, n = _linha_bd1_nova(final, dados, strings)
+        xml_linha, n = _linha_bd1_nova(final, dados, strings, estilos)
         refs += n
         if pos is None:
             idx = texto.rfind("</sheetData>")
@@ -583,9 +631,10 @@ def _valor_celula(corpo: str, letra: str, num_linha: int) -> str | None:
 
 
 def _trocar_celula_valor(corpo: str, letra: str, num_linha: int,
-                         valor: str, estilo_quando_vazio: int | None) -> str:
+                         valor: str, estilo_quando_vazio: int) -> str:
     """Troca o <v> da célula preservando o estilo; célula vazia/ausente é
-    criada — com `estilo_quando_vazio` (None → s=15, o estilo dos valores)."""
+    criada com `estilo_quando_vazio` (o estilo dominante da coluna — o estilo
+    de uma célula vazia não indica o visual de uma célula preenchida)."""
     ref = f"{letra}{num_linha}"
     m = re.search(rf'<c r="{ref}"((?:[^<]*[^/>])?)>(.*?)</c>', corpo, flags=re.DOTALL)
     if m:
@@ -599,25 +648,23 @@ def _trocar_celula_valor(corpo: str, letra: str, num_linha: int,
                 + corpo[m.end():])
     m = re.search(rf'<c r="{ref}"([^<]*)/>', corpo)
     if m:
-        attrs = m.group(1)
-        if estilo_quando_vazio is not None:
-            attrs = re.sub(r'\s+s="\d+"', "", attrs) + f' s="{estilo_quando_vazio}"'
+        attrs = re.sub(r'\s+s="\d+"', "", m.group(1)) + f' s="{estilo_quando_vazio}"'
         return (corpo[:m.start()] + f'<c r="{ref}"{attrs}><v>{valor}</v></c>'
                 + corpo[m.end():])
-    estilo = estilo_quando_vazio if estilo_quando_vazio is not None else 15
-    nova = f'<c r="{ref}" s="{estilo}"><v>{valor}</v></c>'
+    nova = f'<c r="{ref}" s="{estilo_quando_vazio}"><v>{valor}</v></c>'
     return corpo.rstrip()[:-len("</row>")] + nova + "</row>"
 
 
 def _upsert_bd1(xml_bd1: str, df_wpd: pd.DataFrame, remessas_existentes: set,
                 strings) -> tuple[str, list[dict], int] | None:
     """UPSERT das remessas do WPD que JÁ existem na BD1: preenche/atualiza a
-    Baixa (F, s=57 quando vazia — convenção do arquivo real) e os valores
-    (I–Q) das linhas existentes. Baixa=None no WPD NÃO desfaz uma baixa já
-    gravada. Retorna (xml_novo, mudanças, células alteradas) ou None se nada
-    mudou. Cada mudança: {remessa_norm, num_linha, dados (de
-    _converter_linha_wpd), campos}."""
+    Baixa (F) e os valores (I–Q) das linhas existentes. Baixa=None no WPD NÃO
+    desfaz uma baixa já gravada. Células vazias recebem o estilo DOMINANTE da
+    coluna na própria base (mapa de _estilos_dominantes). Retorna (xml_novo,
+    mudanças, células alteradas) ou None se nada mudou. Cada mudança:
+    {remessa_norm, num_linha, dados (de _converter_linha_wpd), campos}."""
     linhas = _linhas_bd1(xml_bd1, strings)
+    estilos = _estilos_dominantes(xml_bd1, "ABCDEFGHIJKLMNOPQRSTUV")
     por_linha: dict[int, tuple[str, str]] = {}   # num_linha -> (abertura, corpo_novo)
     mudancas: list[dict] = []
     n_celulas = 0
@@ -638,13 +685,15 @@ def _upsert_bd1(xml_bd1: str, df_wpd: pd.DataFrame, remessas_existentes: set,
                 if _float_iguais(atual, serial):
                     continue
                 corpo_novo = _trocar_celula_valor(corpo_novo, letra, num_linha,
-                                                  serial, estilo_quando_vazio=57)
+                                                  serial,
+                                                  estilo_quando_vazio=estilos["F"]["valor"])
             else:
                 canon = _numero(novo)
                 if _float_iguais(atual, canon):
                     continue
                 corpo_novo = _trocar_celula_valor(corpo_novo, letra, num_linha,
-                                                  canon, estilo_quando_vazio=None)
+                                                  canon,
+                                                  estilo_quando_vazio=estilos[letra]["valor"])
             campos.append(col)
             n_celulas += 1
         if campos:
@@ -699,17 +748,17 @@ def _bloco_bd2(xlsx_limpo: str) -> list[dict] | None:
 
 
 def _linha_bd2(num_linha: int, convenio: str, data_serial: int,
-               valores: list, strings) -> str:
-    """Uma <row> da BD2 com os MESMOS estilos das linhas existentes da base:
-    A string s=5 (fonte escura — o s=34 antigo era fonte branca, nome
-    invisível), B data s=16 (mm-dd-yy), C–I números s=49 (máscara #,##0.00 —
-    o s=53 antigo era fundo amarelo sem máscara), J =1 s=17 (J=1 mantém a
-    formatação condicional $J2=1/$J2=2)."""
-    cels = [_celula(f"A{num_linha}", 5, str(strings.obter_indice(convenio)), tipo="s"),
-            _celula(f"B{num_linha}", 16, str(data_serial))]
+               valores: list, strings, estilos: dict) -> str:
+    """Uma <row> da BD2 com os estilos DOMINANTES das linhas existentes da
+    base (mapa de _estilos_dominantes): A/B/C–I/J herdam o visual da própria
+    base — índices fixos quebram quando a base é reestilizada."""
+    cels = [_celula(f"A{num_linha}", estilos["A"]["valor"],
+                    str(strings.obter_indice(convenio)), tipo="s"),
+            _celula(f"B{num_linha}", estilos["B"]["valor"], str(data_serial))]
     for i, v in enumerate(valores):  # C..I
-        cels.append(_celula(f"{chr(ord('C') + i)}{num_linha}", 49, _numero(v)))
-    cels.append(_celula(f"J{num_linha}", 17, "1"))
+        cels.append(_celula(f"{chr(ord('C') + i)}{num_linha}",
+                            estilos["C"]["valor"], _numero(v)))
+    cels.append(_celula(f"J{num_linha}", estilos["J"]["valor"], "1"))
     return f'<row r="{num_linha}">{"".join(cels)}</row>'
 
 
@@ -738,12 +787,13 @@ def _valores_c_i(corpo: str) -> dict:
             for m in _RE_CEL_CI.finditer(corpo)}
 
 
-def _upsert_c_i(corpo: str, linha: int, novos: list) -> str:
+def _upsert_c_i(corpo: str, linha: int, novos: list, estilo_ci: int) -> str:
     """Atualiza/injeta as células C-I de uma row: `novos[i]` é o valor
     canônico novo (None preserva a posição). Só células NUMÉRICAS com valor
     numericamente diferente são reescritas (preservando o estilo original);
     células t='s' (strings históricas) e reprs de float equivalentes são
-    intocadas; células que faltam são criadas antes de </row>."""
+    intocadas; células que faltam são criadas antes de </row> com `estilo_ci`
+    (o estilo dominante da coluna C na própria base)."""
     def _troca(m):
         col, attrs, atual = m.group(1), m.group(3) or "", m.group(4)
         i = ord(col) - ord("C")
@@ -752,9 +802,9 @@ def _upsert_c_i(corpo: str, linha: int, novos: list) -> str:
             return m.group(0)
         if 't="s"' in attrs:
             # string de espaços convertida pela quitação (valor real do NI):
-            # a célula inteira vira numérica com o estilo das demais (s=49)
+            # a célula inteira vira numérica com o estilo dominante da coluna
             attrs_novos = re.sub(r'\s+t="s"', "", attrs)
-            attrs_novos = re.sub(r'\s+s="\d+"', "", attrs_novos) + ' s="49"'
+            attrs_novos = re.sub(r'\s+s="\d+"', "", attrs_novos) + f' s="{estilo_ci}"'
             return f'<c r="{col}{linha}"{attrs_novos}><v>{novo}</v></c>'
         if m.group(4) is None:  # célula sem <v>
             if m.group(0).endswith("/>"):
@@ -763,7 +813,7 @@ def _upsert_c_i(corpo: str, linha: int, novos: list) -> str:
         return m.group(0).replace(f"<v>{m.group(4)}</v>", f"<v>{novo}</v>", 1)
     corpo_novo = _RE_CEL_CI.sub(_troca, corpo)
     presentes = {m.group(1) for m in _RE_CEL_CI.finditer(corpo_novo)}
-    criadas = [f'<c r="{_COLS_CI[i]}{linha}" s="49"><v>{novo}</v></c>'
+    criadas = [f'<c r="{_COLS_CI[i]}{linha}" s="{estilo_ci}"><v>{novo}</v></c>'
                for i, novo in enumerate(novos)
                if novo is not None and _COLS_CI[i] not in presentes]
     return corpo_novo + "".join(criadas)
@@ -797,6 +847,11 @@ def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | 
     fim_atual = _ultima_linha(xml_bd2)
     mudou = False
     mapeamento = {}
+
+    # estilos dominantes derivados da PRÓPRIA base (valor x vazio por coluna):
+    # as rows novas e as células criadas no upsert herdam o visual das linhas
+    # existentes — índices fixos quebram quando a base é reestilizada
+    estilos = _estilos_dominantes(xml_bd2, "ABCDEFGHIJ")
 
     # chaves já presentes: (Convênio sem padding, serial da data em B) -> (linha, corpo)
     existentes: dict[tuple, tuple[int, str]] = {}
@@ -889,7 +944,7 @@ def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | 
             linha, vals = att["linha"], att["valores"]
 
             def _troca_row(m):
-                return f'<row r="{linha}"{m.group(1)}>{_upsert_c_i(m.group(2), linha, vals)}</row>'
+                return f'<row r="{linha}"{m.group(1)}>{_upsert_c_i(m.group(2), linha, vals, estilos["C"]["valor"])}</row>'
             texto, n = re.subn(rf'<row r="{linha}"([^>]*)>(.*?)</row>', _troca_row,
                                texto, count=1, flags=re.DOTALL)
             if n != 1:
@@ -959,7 +1014,7 @@ def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | 
                         + sum(1 for pj, _ in insercoes[:i] if pj == pos))
                 final = alvo + 1
             row_xml = _linha_bd2(final, b["convenio"], b["data"],
-                                 b["valores"], strings)
+                                 b["valores"], strings, estilos)
             if pos is None:
                 idx = texto.rfind("</sheetData>")
                 texto = texto[:idx] + row_xml + texto[idx:]
