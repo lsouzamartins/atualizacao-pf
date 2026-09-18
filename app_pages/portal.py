@@ -3,6 +3,19 @@ import streamlit as st
 
 from ui_comum import icone, VERSAO
 
+# Caixas dos sistemas sempre com a mesma altura (o Streamlit 1.60 não estica
+# os blocos internos das colunas sozinho; sem isto, uma caixa pode ficar mais
+# baixa que a outra dependendo da largura da janela).
+st.markdown("""
+<style>
+    div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"],
+    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"],
+    div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] > div {
+        height: 100%;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 st.markdown(f"### {icone('home', 20, '#1C5A8A')} SISTEMAS INTEGRADOS", unsafe_allow_html=True)
 st.caption("Você tem acesso a mais de um sistema. Selecione onde quer trabalhar.")
 
