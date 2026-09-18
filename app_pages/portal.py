@@ -15,9 +15,10 @@ with c1:
         st.page_link("app_pages/processamento.py", label="Abrir Atualização PF")
 with c2:
     with st.container(border=True):
-        st.markdown(f"{icone('hand-coins', 22, '#1C5A8A')} **Contas a Receber**",
+        st.markdown(f"{icone('file-spreadsheet', 22, '#1C5A8A')} **DACM × FATURAMENTO**",
                     unsafe_allow_html=True)
-        st.caption("Dashboard de glosas e recursos dos DACMs dos convênios.")
-        st.page_link("app_pages/dashboard_glosas.py", label="Abrir Contas a Receber")
+        st.caption("Conferência de guias entre os DACMs e o faturamento.")
+        st.link_button(label="Abrir DACM × FATURAMENTO",
+                       url="https://pf.lsm.ia.br/dacm/")
 
 st.markdown(f'<div class="app-footer">{VERSAO}</div>', unsafe_allow_html=True)

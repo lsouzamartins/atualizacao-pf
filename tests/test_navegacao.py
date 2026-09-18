@@ -10,13 +10,11 @@ def test_sem_acesso_cr_nav_fica_como_hoje():
     assert all(not p["titulo"].startswith(("PF ·", "CR ·")) for p in paginas)
 
 
-def test_com_acesso_cr_portal_e_default_e_prefixos():
+def test_com_acesso_cr_portal_e_default_sem_paginas_cr():
     paginas = navegacao.montar_paginas(True)
     titulos = [p["titulo"] for p in paginas]
     assert titulos[0] == "Início" and paginas[0]["default"] is True
     assert "PF · Processamento" in titulos
-    assert "CR · Dashboard" in titulos
-    assert "CR · Upload DACM" in titulos
-    assert "CR · Recursos de Glosa" in titulos
-    assert len(paginas) == 8
+    assert not any(t.startswith("CR ·") for t in titulos)
+    assert len(paginas) == 5
     assert all(not p["default"] for p in paginas[1:])

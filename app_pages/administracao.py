@@ -69,9 +69,9 @@ with st.form("remover_usuario"):
             else:
                 st.error(resultado["erro"])
 
-st.markdown(f"#### {icone('layout-dashboard', 18)} Acesso ao Contas a Receber",
+st.markdown(f"#### {icone('layout-dashboard', 18)} Acesso ao portal (Início)",
             unsafe_allow_html=True)
-st.caption("Usuários marcados veem o portal e as páginas do dashboard de glosas.")
+st.caption("Usuários marcados veem o portal (Início) com os atalhos dos sistemas.")
 with st.form("acesso_contas_receber"):
     acessos = {}
     for row in banco.listar_usuarios(conn):
