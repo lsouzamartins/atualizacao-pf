@@ -12,3 +12,8 @@ logo de erro/
 .env
 .superpowers/
 .tmp_repro_0909/
+venv/
+*.bak-*
+*.bak_*
+logs/
+.streamlit/
