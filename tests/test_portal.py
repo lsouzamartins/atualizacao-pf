@@ -6,10 +6,9 @@ FONTE = (Path(__file__).resolve().parents[1] / "app_pages" / "portal.py") \
     .read_text(encoding="utf-8")
 
 
-def test_portal_titulo_slogan():
-    assert "Sua rotina de trabalho, mais simples e ágil" in FONTE
-    assert "Selecione a ferramenta abaixo para automatizar o seu processo" in FONTE
-    assert "SISTEMAS INTEGRADOS" not in FONTE
+def test_portal_titulo_sistemas_integrados():
+    assert "SISTEMAS INTEGRADOS" in FONTE
+    assert "Sua rotina de trabalho" not in FONTE
 
 
 def test_portal_card_pf_mantem_titulo_e_caption():

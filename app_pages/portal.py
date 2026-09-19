@@ -16,9 +16,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown(f"### {icone('activity', 20, '#1C5A8A')} Sua rotina de trabalho, mais simples e ágil", unsafe_allow_html=True)
-st.caption("Selecione a ferramenta abaixo para automatizar o seu processo, "
-           "eliminar tarefas repetitivas e ganhar mais tempo no seu dia.")
+st.markdown(f"### {icone('home', 20, '#1C5A8A')} SISTEMAS INTEGRADOS", unsafe_allow_html=True)
+st.caption("Você tem acesso a mais de um sistema. Selecione onde quer trabalhar.")
 
 c1, c2 = st.columns(2)
 with c1:

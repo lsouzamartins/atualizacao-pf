@@ -30,6 +30,17 @@ def test_badge_status_contem_rotulo_e_cor():
     assert "Status desconhecido" in html2  # cai no cinza padrão
 
 
+def test_barra_cabecalho_com_slogan():
+    """Faixa do topo (todas as telas) com o slogan pedido pelo Leonardo (19/09):
+    'Sua rotina de trabalho, mais simples e ágil' no lugar do título do PF."""
+    import inspect
+    fonte = inspect.getsource(ui_comum.barra_cabecalho)
+    assert "Sua rotina de trabalho, mais simples e ágil" in fonte
+    assert ("Selecione a ferramenta abaixo para automatizar o seu processo, "
+            "eliminar tarefas repetitivas" in fonte)
+    assert "Atualização da Posição Financeira" not in fonte
+
+
 def test_icones_do_portal_e_das_paginas_existem_no_lucide():
     """Regressão: icone() devolve '' silenciosamente para nomes fora do _LUCIDE —
     os ícones do portal pós-login e das páginas precisam existir no set
