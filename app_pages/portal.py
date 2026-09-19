@@ -19,7 +19,7 @@ st.markdown("""
 st.markdown(f"### {icone('home', 20, '#1C5A8A')} SISTEMAS INTEGRADOS", unsafe_allow_html=True)
 st.caption("Você tem acesso a mais de um sistema. Selecione onde quer trabalhar.")
 
-c1, c2 = st.columns(2)
+c1, c2, c3 = st.columns(3)
 with c1:
     with st.container(border=True):
         st.markdown(f"{icone('play-circle', 22, '#1C5A8A')} **Atualização da Posição Financeira**",
@@ -33,5 +33,12 @@ with c2:
         st.caption("Conferência de guias entre os DACMs e o faturamento.")
         st.link_button(label="Abrir DACM × FATURAMENTO",
                        url="https://pf.lsm.ia.br/dacm/", type="tertiary")
+with c3:
+    with st.container(border=True):
+        st.markdown(f"{icone('arrow-left-right', 22, '#1C5A8A')} **Conciliador de Convênios**",
+                    unsafe_allow_html=True)
+        st.caption("Conciliação entre os arquivos DACM e BAIXAS dos convênios.")
+        st.link_button(label="Abrir Conciliador",
+                       url="https://pf.lsm.ia.br/conciliador/", type="tertiary")
 
 st.markdown(f'<div class="app-footer">{VERSAO}</div>', unsafe_allow_html=True)
