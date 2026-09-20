@@ -46,7 +46,8 @@ def test_icones_do_portal_e_das_paginas_existem_no_lucide():
     os ícones do portal pós-login e das páginas precisam existir no set
     para o visual não sumir sem erro."""
     from ui_comum import _LUCIDE
-    for nome in ("home", "play-circle", "file-spreadsheet", "layout-dashboard", "upload",
+    for nome in ("home", "play-circle", "file-spreadsheet", "arrow-left-right",
+                 "layout-dashboard", "upload",
                  "history", "chart-column", "alarm-clock", "bell-ring", "trending-up",
                  "list", "triangle-alert", "percent", "clock", "circle-minus",
                  "file-down"):
