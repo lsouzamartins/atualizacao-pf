@@ -129,14 +129,12 @@ def test_exigir_login_tem_titulo_cartao_e_mesma_logica():
     assert "st.stop()" in src
 
 
-def test_login_css_tem_fundo_de_setas_ascendentes():
-    """Fundo da tela de login (13/09, a pedido — vetor de setas ascendentes
-    que o Leonardo escolheu): imagem embutida em base64 no CSS com cobertura
-    total da tela e véu do navy por cima para manter o contraste do cartão."""
+def test_login_css_tem_fundo_navy_liso():
+    """Fundo da tela de login (24/09, a pedido — o desenho de setas foi
+    removido): azul-marinho liso, sem imagem embutida."""
     css = ui_comum.LOGIN_CSS
-    assert "data:image/jpeg;base64" in css  # imagem embutida (sem arquivo extra)
-    assert "cover" in css                   # cobre a tela inteira
-    assert "linear-gradient" in css         # véu navy sobre a imagem
+    assert "data:image/jpeg;base64" not in css  # sem imagem de fundo
+    assert "#131A3D" in css                     # navy liso
 
 
 def test_exigir_login_tem_login_senha_entrar_em_portugues():
