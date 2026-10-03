@@ -123,7 +123,7 @@ def exigir_login():
             # O empty() reserva o espaço no topo do cartão; o markdown o preenche a
             # cada rerun (o on_change do campo dispara rerun a cada tecla digitada).
             slot_avatar = st.empty()
-            login = st.text_input("Login", placeholder="Digite seu login",
+            login = st.text_input("Login", placeholder="Digite seu CPF",
                                   label_visibility="collapsed", key="login_usuario",
                                   on_change=lambda: None)
             senha = st.text_input("Senha", type="password", placeholder="Digite sua senha",
