@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
   senha_hash TEXT NOT NULL,
   admin INTEGER NOT NULL DEFAULT 0,
   acesso_contas_receber INTEGER NOT NULL DEFAULT 0,
+  acesso_glosa INTEGER NOT NULL DEFAULT 0,
   falhas_seguidas INTEGER NOT NULL DEFAULT 0,
   bloqueado_ate TEXT,
   criado_em TEXT NOT NULL
@@ -81,9 +82,18 @@ def _migrar_acesso_contas_receber(conn):
                      "INTEGER NOT NULL DEFAULT 0")
 
 
+def _migrar_acesso_glosa(conn):
+    """Garante usuarios.acesso_glosa (bancos criados antes da feature)."""
+    colunas = [r["name"] for r in conn.execute("PRAGMA table_info(usuarios)").fetchall()]
+    if "acesso_glosa" not in colunas:
+        conn.execute("ALTER TABLE usuarios ADD COLUMN acesso_glosa "
+                     "INTEGER NOT NULL DEFAULT 0")
+
+
 def inicializar_banco(conn):
     conn.executescript(SCHEMA)
     _migrar_acesso_contas_receber(conn)
+    _migrar_acesso_glosa(conn)
     conn.commit()
 
 
@@ -108,15 +118,22 @@ def criar_usuario(conn, login, nome, senha, admin=False):
 
 def listar_usuarios(conn):
     """Usuários ordenados por login (linhas sqlite3.Row com id, login, nome,
-    admin, acesso_contas_receber)."""
+    admin, acesso_contas_receber, acesso_glosa)."""
     return conn.execute(
-        "SELECT id, login, nome, admin, acesso_contas_receber "
+        "SELECT id, login, nome, admin, acesso_contas_receber, acesso_glosa "
         "FROM usuarios ORDER BY login").fetchall()
 
 
 def definir_acesso_contas_receber(conn, login, valor):
     """Liga/desliga o acesso ao sistema Contas a Receber para o usuário."""
     conn.execute("UPDATE usuarios SET acesso_contas_receber=? WHERE login=?",
+                 (1 if valor else 0, login))
+    conn.commit()
+
+
+def definir_acesso_glosa(conn, login, valor):
+    """Liga/desliga o card do Recursos de Glosa no portal para o usuário."""
+    conn.execute("UPDATE usuarios SET acesso_glosa=? WHERE login=?",
                  (1 if valor else 0, login))
     conn.commit()
 

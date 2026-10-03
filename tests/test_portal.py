@@ -25,3 +25,12 @@ def test_portal_css_caixas_com_mesma_altura():
     """Regressão: o CSS de equalização das caixas precisa estar presente —
     sem ele uma caixa pode renderizar mais baixa que a outra."""
     assert "stColumn" in FONTE and "height: 100%;" in FONTE
+
+
+def test_portal_card_recursos_glosa_condicionado_abaixo_do_pf():
+    """Pedido do Leonardo (02/10): card do Recursos de Glosa visível só para
+    quem tem o acesso marcado, na coluna do card do PF (abaixo dele)."""
+    assert "Recursos de Glosa" in FONTE
+    assert "https://pf.lsm.ia.br/glosa/" in FONTE
+    assert 'usuario.get("acesso_glosa")' in FONTE
+    assert FONTE.index("Abrir Atualização PF") < FONTE.index("Abrir Recursos de Glosa")

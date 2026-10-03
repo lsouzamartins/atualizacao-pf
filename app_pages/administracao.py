@@ -83,6 +83,21 @@ with st.form("acesso_contas_receber"):
         st.success("Acessos atualizados.")
         st.rerun()
 
+st.markdown(f"#### {icone('list', 18)} Acesso ao Recursos de Glosa",
+            unsafe_allow_html=True)
+st.caption("Usuários marcados veem o card do Recursos de Glosa no portal "
+           "(o sistema pede o login próprio de lá, por CPF e senha).")
+with st.form("acesso_glosa"):
+    acessos_glosa = {}
+    for row in banco.listar_usuarios(conn):
+        acessos_glosa[row["login"]] = st.checkbox(
+            f"{row['login']} ({row['nome']})", value=bool(row["acesso_glosa"]))
+    if st.form_submit_button("Salvar acessos ao glosa", type="primary"):
+        for login, valor in acessos_glosa.items():
+            banco.definir_acesso_glosa(conn, login, valor)
+        st.success("Acessos ao Recursos de Glosa atualizados.")
+        st.rerun()
+
 st.markdown(f"#### {icone('camera', 18)} Foto do usuário (login)", unsafe_allow_html=True)
 st.caption("Foto exibida no cartão de login. O arquivo é guardado no tamanho "
            "original, sem cortes (PNG ou JPG, máx. 2 MB).")

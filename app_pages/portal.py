@@ -19,6 +19,8 @@ st.markdown("""
 st.markdown(f"### {icone('home', 20, '#1C5A8A')} SISTEMAS INTEGRADOS", unsafe_allow_html=True)
 st.caption("Você tem acesso a mais de um sistema. Selecione onde quer trabalhar.")
 
+usuario = st.session_state.get("usuario", {})
+
 c1, c2, c3 = st.columns(3)
 with c1:
     with st.container(border=True):
@@ -26,6 +28,13 @@ with c1:
                     unsafe_allow_html=True)
         st.caption("Integração automática WPD-26 + Não Identificado.")
         st.page_link("app_pages/processamento.py", label="Abrir Atualização PF")
+    if usuario.get("acesso_glosa"):
+        with st.container(border=True):
+            st.markdown(f"{icone('list', 22, '#1C5A8A')} **Recursos de Glosa**",
+                        unsafe_allow_html=True)
+            st.caption("Fila de glosas e demonstrativos (DACM) da Amil.")
+            st.link_button(label="Abrir Recursos de Glosa",
+                           url="https://pf.lsm.ia.br/glosa/", type="tertiary")
 with c2:
     with st.container(border=True):
         st.markdown(f"{icone('file-spreadsheet', 22, '#1C5A8A')} **DACM × FATURAMENTO**",
