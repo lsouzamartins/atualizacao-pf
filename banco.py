@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
   admin INTEGER NOT NULL DEFAULT 0,
   acesso_contas_receber INTEGER NOT NULL DEFAULT 0,
   acesso_glosa INTEGER NOT NULL DEFAULT 0,
+  acesso_pediu_chegou INTEGER NOT NULL DEFAULT 0,
   falhas_seguidas INTEGER NOT NULL DEFAULT 0,
   bloqueado_ate TEXT,
   criado_em TEXT NOT NULL
@@ -90,10 +91,19 @@ def _migrar_acesso_glosa(conn):
                      "INTEGER NOT NULL DEFAULT 0")
 
 
+def _migrar_acesso_pediu_chegou(conn):
+    """Garante usuarios.acesso_pediu_chegou (bancos criados antes da feature)."""
+    colunas = [r["name"] for r in conn.execute("PRAGMA table_info(usuarios)").fetchall()]
+    if "acesso_pediu_chegou" not in colunas:
+        conn.execute("ALTER TABLE usuarios ADD COLUMN acesso_pediu_chegou "
+                     "INTEGER NOT NULL DEFAULT 0")
+
+
 def inicializar_banco(conn):
     conn.executescript(SCHEMA)
     _migrar_acesso_contas_receber(conn)
     _migrar_acesso_glosa(conn)
+    _migrar_acesso_pediu_chegou(conn)
     conn.commit()
 
 
@@ -118,10 +128,10 @@ def criar_usuario(conn, login, nome, senha, admin=False):
 
 def listar_usuarios(conn):
     """Usuários ordenados por login (linhas sqlite3.Row com id, login, nome,
-    admin, acesso_contas_receber, acesso_glosa)."""
+    admin, acesso_contas_receber, acesso_glosa, acesso_pediu_chegou)."""
     return conn.execute(
-        "SELECT id, login, nome, admin, acesso_contas_receber, acesso_glosa "
-        "FROM usuarios ORDER BY login").fetchall()
+        "SELECT id, login, nome, admin, acesso_contas_receber, acesso_glosa, "
+        "acesso_pediu_chegou FROM usuarios ORDER BY login").fetchall()
 
 
 def definir_acesso_contas_receber(conn, login, valor):
@@ -134,6 +144,13 @@ def definir_acesso_contas_receber(conn, login, valor):
 def definir_acesso_glosa(conn, login, valor):
     """Liga/desliga o card do Recursos de Glosa no portal para o usuário."""
     conn.execute("UPDATE usuarios SET acesso_glosa=? WHERE login=?",
+                 (1 if valor else 0, login))
+    conn.commit()
+
+
+def definir_acesso_pediu_chegou(conn, login, valor):
+    """Liga/desliga o card do Pediu Chegou no portal para o usuário."""
+    conn.execute("UPDATE usuarios SET acesso_pediu_chegou=? WHERE login=?",
                  (1 if valor else 0, login))
     conn.commit()
 

@@ -51,6 +51,6 @@ def test_icones_do_portal_e_das_paginas_existem_no_lucide():
                  "layout-dashboard", "upload",
                  "history", "chart-column", "alarm-clock", "bell-ring", "trending-up",
                  "list", "triangle-alert", "percent", "clock", "circle-minus",
-                 "file-down"):
+                 "file-down", "store"):
         assert nome in _LUCIDE
         assert ui_comum.icone(nome) != ""

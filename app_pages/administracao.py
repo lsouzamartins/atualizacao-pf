@@ -98,6 +98,20 @@ with st.form("acesso_glosa"):
         st.success("Acessos ao Recursos de Glosa atualizados.")
         st.rerun()
 
+st.markdown(f"#### {icone('store', 18)} Acesso ao Pediu Chegou",
+            unsafe_allow_html=True)
+st.caption("Usuários marcados veem o card do Pediu Chegou no portal.")
+with st.form("acesso_pediu_chegou"):
+    acessos_pediu = {}
+    for row in banco.listar_usuarios(conn):
+        acessos_pediu[row["login"]] = st.checkbox(
+            f"{row['login']} ({row['nome']})", value=bool(row["acesso_pediu_chegou"]))
+    if st.form_submit_button("Salvar acessos ao Pediu Chegou", type="primary"):
+        for login, valor in acessos_pediu.items():
+            banco.definir_acesso_pediu_chegou(conn, login, valor)
+        st.success("Acessos ao Pediu Chegou atualizados.")
+        st.rerun()
+
 st.markdown(f"#### {icone('camera', 18)} Foto do usuário (login)", unsafe_allow_html=True)
 st.caption("Foto exibida no cartão de login. O arquivo é guardado no tamanho "
            "original, sem cortes (PNG ou JPG, máx. 2 MB).")

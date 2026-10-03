@@ -29,8 +29,19 @@ def test_portal_css_caixas_com_mesma_altura():
 
 def test_portal_card_recursos_glosa_condicionado_abaixo_do_pf():
     """Pedido do Leonardo (02/10): card do Recursos de Glosa visível só para
-    quem tem o acesso marcado, na coluna do card do PF (abaixo dele)."""
+    quem tem o acesso marcado (ou admin), na coluna do card do PF (abaixo)."""
     assert "Recursos de Glosa" in FONTE
     assert "https://pf.lsm.ia.br/glosa/" in FONTE
+    assert 'usuario.get("admin")' in FONTE
     assert 'usuario.get("acesso_glosa")' in FONTE
     assert FONTE.index("Abrir Atualização PF") < FONTE.index("Abrir Recursos de Glosa")
+
+
+def test_portal_admin_ve_todas_as_plataformas():
+    """Pedido do Leonardo (02/10): o usuário admin vê TODAS as plataformas —
+    inclui o card do Pediu Chegou (os demais usuários veem só as autorizadas)."""
+    assert "Pediu Chegou" in FONTE
+    assert "https://pediuchegou.ia.br" in FONTE
+    assert 'usuario.get("admin")' in FONTE
+    assert 'usuario.get("acesso_pediu_chegou")' in FONTE
+    assert FONTE.index("Abrir DACM") < FONTE.index("Abrir Pediu Chegou")
