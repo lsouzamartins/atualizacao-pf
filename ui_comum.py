@@ -389,7 +389,7 @@ def barra_cabecalho():
     st.markdown("""
     <div class="brand-bar">
         <div class="brand-text">
-            <div class="brand-title">Sua rotina de trabalho, mais simples e ágil</div>
+            <div class="brand-title">Sua rotina de tarefa, mais simples e ágil</div>
             <p class="brand-sub">Selecione a ferramenta abaixo para automatizar o seu processo, eliminar tarefas repetitivas e ganhar mais tempo no seu dia</p>
         </div>
     </div>

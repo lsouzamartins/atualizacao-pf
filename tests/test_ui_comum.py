@@ -31,11 +31,12 @@ def test_badge_status_contem_rotulo_e_cor():
 
 
 def test_barra_cabecalho_com_slogan():
-    """Faixa do topo (todas as telas) com o slogan pedido pelo Leonardo (19/09):
-    'Sua rotina de trabalho, mais simples e ágil' no lugar do título do PF."""
+    """Faixa do topo (todas as telas) com o slogan pedido pelo Leonardo
+    (02/10): 'Sua rotina de tarefa, mais simples e ágil' no lugar do título
+    do PF."""
     import inspect
     fonte = inspect.getsource(ui_comum.barra_cabecalho)
-    assert "Sua rotina de trabalho, mais simples e ágil" in fonte
+    assert "Sua rotina de tarefa, mais simples e ágil" in fonte
     assert ("Selecione a ferramenta abaixo para automatizar o seu processo, "
             "eliminar tarefas repetitivas" in fonte)
     assert "Atualização da Posição Financeira" not in fonte

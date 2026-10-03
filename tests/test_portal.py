@@ -8,7 +8,7 @@ FONTE = (Path(__file__).resolve().parents[1] / "app_pages" / "portal.py") \
 
 def test_portal_titulo_sistemas_integrados():
     assert "SISTEMAS INTEGRADOS" in FONTE
-    assert "Sua rotina de trabalho" not in FONTE
+    assert "Sua rotina de tarefa" not in FONTE
 
 
 def test_portal_card_pf_mantem_titulo_e_caption():
