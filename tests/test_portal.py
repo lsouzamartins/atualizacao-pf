@@ -21,10 +21,11 @@ def test_portal_link_dacm_externo_sem_borda():
     assert 'type="tertiary"' in FONTE
 
 
-def test_portal_css_caixas_com_mesma_altura():
-    """Regressão: o CSS de equalização das caixas precisa estar presente —
-    sem ele uma caixa pode renderizar mais baixa que a outra."""
-    assert "stColumn" in FONTE and "height: 100%;" in FONTE
+def test_portal_css_sem_esticamento_das_caixas():
+    """Pedido do Leonardo (03/10): cards no tamanho natural, sem esticar —
+    o CSS de equalização (height: 100%) esticava os cards sozinhos das
+    colunas 2 e 3, que ficavam maiores que os do PF e Glosa."""
+    assert "height: 100%" not in FONTE
 
 
 def test_portal_card_recursos_glosa_condicionado_abaixo_do_pf():
