@@ -16,6 +16,16 @@ def test_portal_card_pf_mantem_titulo_e_caption():
     assert "Integração automática WPD-26 + Não Identificado." in FONTE
 
 
+def test_portal_botao_pf_tertiary_igual_aos_outros_cards():
+    """Pedido do Leonardo (03/10): o card do PF usava st.page_link (link de
+    texto) e ficava com layout diferente dos outros cards, que usam botão
+    tertiary — o 'Abrir Atualização PF' vira um st.button tertiary com
+    st.switch_page para a página interna."""
+    assert 'st.button("Abrir Atualização PF", type="tertiary")' in FONTE
+    assert 'st.switch_page("app_pages/processamento.py")' in FONTE
+    assert "st.page_link(" not in FONTE
+
+
 def test_portal_link_dacm_externo_sem_borda():
     assert "https://pf.lsm.ia.br/dacm/" in FONTE
     assert 'type="tertiary"' in FONTE

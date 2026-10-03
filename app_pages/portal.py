@@ -14,7 +14,8 @@ with c1:
         st.markdown(f"{icone('play-circle', 22, '#1C5A8A')} **Atualização da Posição Financeira**",
                     unsafe_allow_html=True)
         st.caption("Integração automática WPD-26 + Não Identificado.")
-        st.page_link("app_pages/processamento.py", label="Abrir Atualização PF")
+        if st.button("Abrir Atualização PF", type="tertiary"):
+            st.switch_page("app_pages/processamento.py")
     if usuario.get("admin") or usuario.get("acesso_glosa"):
         with st.container(border=True):
             st.markdown(f"{icone('list', 22, '#1C5A8A')} **Recursos de Glosa**",
