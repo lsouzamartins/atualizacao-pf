@@ -42,13 +42,6 @@ with c2:
         st.caption("Conferência de guias entre os DACMs e o faturamento.")
         st.link_button(label="Abrir DACM × FATURAMENTO",
                        url="https://pf.lsm.ia.br/dacm/", type="tertiary")
-    if usuario.get("admin") or usuario.get("acesso_pediu_chegou"):
-        with st.container(border=True):
-            st.markdown(f"{icone('store', 22, '#1C5A8A')} **Pediu Chegou**",
-                        unsafe_allow_html=True)
-            st.caption("Marketplace de alimentação.")
-            st.link_button(label="Abrir Pediu Chegou",
-                           url="https://pediuchegou.ia.br", type="tertiary")
 with c3:
     with st.container(border=True):
         st.markdown(f"{icone('arrow-left-right', 22, '#1C5A8A')} **Conciliador de Convênios**",
