@@ -366,6 +366,72 @@ def test_autenticar_devolve_acesso_glosa(tmp_path):
     conn.close()
 
 
+def test_migracao_acessos_dacm_e_conciliador_banco_antigo_sem_colunas(tmp_path):
+    """Banco anterior à tabela única de acessos (12/10) ganha as colunas
+    acesso_dacm e acesso_conciliador ao inicializar."""
+    db = str(tmp_path / "pf_antigo.db")
+    conn_antigo = sqlite3.connect(db)
+    conn_antigo.execute("""CREATE TABLE usuarios (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        login TEXT UNIQUE NOT NULL,
+        nome TEXT NOT NULL,
+        senha_hash TEXT NOT NULL,
+        admin INTEGER NOT NULL DEFAULT 0,
+        acesso_contas_receber INTEGER NOT NULL DEFAULT 0,
+        acesso_glosa INTEGER NOT NULL DEFAULT 0,
+        falhas_seguidas INTEGER NOT NULL DEFAULT 0,
+        bloqueado_ate TEXT,
+        criado_em TEXT NOT NULL
+    )""")
+    conn_antigo.commit()
+    conn_antigo.close()
+
+    conn = banco.conectar(db)
+    banco.inicializar_banco(conn)  # não pode quebrar
+    banco.inicializar_banco(conn)  # idempotente
+    colunas = [r["name"] for r in conn.execute("PRAGMA table_info(usuarios)").fetchall()]
+    assert "acesso_dacm" in colunas
+    assert "acesso_conciliador" in colunas
+    conn.close()
+
+
+def test_definir_acesso_dacm_e_conciliador_e_listar(tmp_path):
+    db = str(tmp_path / "pf.db")
+    conn = banco.conectar(db); banco.inicializar_banco(conn)
+    login = "alguem_dacm"
+    banco.criar_usuario(conn, login, "Alguém", "senha12345")
+    assert [r["acesso_dacm"] for r in banco.listar_usuarios(conn)
+            if r["login"] == login] == [0]
+    assert [r["acesso_conciliador"] for r in banco.listar_usuarios(conn)
+            if r["login"] == login] == [0]
+    banco.definir_acesso_dacm(conn, login, True)
+    banco.definir_acesso_conciliador(conn, login, True)
+    assert [r["acesso_dacm"] for r in banco.listar_usuarios(conn)
+            if r["login"] == login] == [1]
+    assert [r["acesso_conciliador"] for r in banco.listar_usuarios(conn)
+            if r["login"] == login] == [1]
+    banco.definir_acesso_dacm(conn, login, False)
+    banco.definir_acesso_conciliador(conn, login, False)
+    assert [r["acesso_dacm"] for r in banco.listar_usuarios(conn)
+            if r["login"] == login] == [0]
+    assert [r["acesso_conciliador"] for r in banco.listar_usuarios(conn)
+            if r["login"] == login] == [0]
+    conn.close()
+
+
+def test_autenticar_devolve_acessos_dacm_e_conciliador(tmp_path):
+    db = str(tmp_path / "pf.db")
+    conn = banco.conectar(db); banco.inicializar_banco(conn)
+    login = "com_acessos"
+    banco.criar_usuario(conn, login, "Com Acessos", "senha12345")
+    banco.definir_acesso_dacm(conn, login, True)
+    banco.definir_acesso_conciliador(conn, login, True)
+    usuario = banco.autenticar(conn, login, "senha12345")
+    assert usuario is not None
+    assert usuario["acesso_dacm"] == 1 and usuario["acesso_conciliador"] == 1
+    conn.close()
+
+
 def test_migracao_acesso_pediu_chegou_banca_antigo_sem_coluna(tmp_path):
     """Banco criado ANTES da feature ganha a coluna acesso_pediu_chegou."""
     db = str(tmp_path / "pf_antigo.db")

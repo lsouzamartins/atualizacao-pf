@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS usuarios (
   acesso_contas_receber INTEGER NOT NULL DEFAULT 0,
   acesso_glosa INTEGER NOT NULL DEFAULT 0,
   acesso_pediu_chegou INTEGER NOT NULL DEFAULT 0,
+  acesso_dacm INTEGER NOT NULL DEFAULT 0,
+  acesso_conciliador INTEGER NOT NULL DEFAULT 0,
   falhas_seguidas INTEGER NOT NULL DEFAULT 0,
   bloqueado_ate TEXT,
   criado_em TEXT NOT NULL
@@ -85,7 +87,8 @@ def _garantir_coluna(conn, nome):
 
 def inicializar_banco(conn):
     conn.executescript(SCHEMA)
-    for coluna in ("acesso_contas_receber", "acesso_glosa", "acesso_pediu_chegou"):
+    for coluna in ("acesso_contas_receber", "acesso_glosa", "acesso_pediu_chegou",
+                   "acesso_dacm", "acesso_conciliador"):
         _garantir_coluna(conn, coluna)
     conn.commit()
 
@@ -126,10 +129,11 @@ def criar_usuario(conn, login, nome, senha, admin=False):
 
 def listar_usuarios(conn):
     """Usuários ordenados por login (linhas sqlite3.Row com id, login, nome,
-    admin, acesso_contas_receber, acesso_glosa, acesso_pediu_chegou)."""
+    admin e as marcas de acesso das plataformas)."""
     return conn.execute(
         "SELECT id, login, nome, admin, acesso_contas_receber, acesso_glosa, "
-        "acesso_pediu_chegou FROM usuarios ORDER BY login").fetchall()
+        "acesso_pediu_chegou, acesso_dacm, acesso_conciliador "
+        "FROM usuarios ORDER BY login").fetchall()
 
 
 def definir_acesso_contas_receber(conn, login, valor):
@@ -149,6 +153,21 @@ def definir_acesso_glosa(conn, login, valor):
 def definir_acesso_pediu_chegou(conn, login, valor):
     """Liga/desliga o card do Pediu Chegou no portal para o usuário."""
     conn.execute("UPDATE usuarios SET acesso_pediu_chegou=? WHERE login=?",
+                 (1 if valor else 0, login))
+
+
+def definir_acesso_dacm(conn, login, valor):
+    """Liga/desliga a marca do DACM × FATURAMENTO para o usuário (12/10: a
+    marca fica guardada no portal; o app tem login próprio por CPF)."""
+    conn.execute("UPDATE usuarios SET acesso_dacm=? WHERE login=?",
+                 (1 if valor else 0, login))
+    conn.commit()
+
+
+def definir_acesso_conciliador(conn, login, valor):
+    """Liga/desliga a marca do Conciliador de Convênios para o usuário (12/10:
+    a marca fica guardada no portal; o app tem login próprio por CPF)."""
+    conn.execute("UPDATE usuarios SET acesso_conciliador=? WHERE login=?",
                  (1 if valor else 0, login))
     conn.commit()
 

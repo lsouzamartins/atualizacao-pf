@@ -69,34 +69,55 @@ with st.form("remover_usuario"):
             else:
                 st.error(resultado["erro"])
 
-st.markdown(f"#### {icone('layout-dashboard', 18)} Acesso ao portal (Início) e à Cobrança",
+st.markdown(f"#### {icone('layout-dashboard', 18)} Acessos das plataformas",
             unsafe_allow_html=True)
-st.caption("Usuários marcados veem o portal (Início) com os atalhos dos sistemas "
-           "e o card da Cobrança.")
-with st.form("acesso_contas_receber"):
+st.caption("Atualização da Posição Financeira · DACM × FATURAMENTO · "
+           "Conciliador de Convênios · Recursos de Glosa · Cobrança. "
+           "Caixinha marcada = o usuário vê a plataforma no portal "
+           "(a Cobrança também usa esta marca no próprio login). "
+           "O DACM e o Conciliador têm login próprio por CPF — a marca "
+           "fica guardada aqui para o futuro. O PF é de todo usuário com login.")
+with st.form("acessos_plataformas"):
+    cab = st.columns([2.4, 1, 1, 1.2, 1, 1.2])
+    for col, titulo in zip(cab, ["Usuário", "PF", "DACM", "Conciliador",
+                                 "Glosa", "Cobrança"]):
+        col.markdown(f"**{titulo}**")
     acessos = {}
     for row in banco.listar_usuarios(conn):
-        acessos[row["login"]] = st.checkbox(
-            f"{row['login']} ({row['nome']})", value=bool(row["acesso_contas_receber"]))
+        login = row["login"]
+        eh_admin = bool(row["admin"])
+        u, pf, dacm, conc, glosa, cob = st.columns([2.4, 1, 1, 1.2, 1, 1.2])
+        u.write(f"{login} ({row['nome']})")
+        # O PF é de todo usuário com login: caixinha travada e marcada.
+        pf.checkbox("PF", value=True, disabled=True,
+                    key=f"ac_{login}_pf", label_visibility="collapsed")
+        # Admin vê tudo: caixinhas travadas e marcadas (nada é salvo para ele).
+        acessos[login] = {
+            "dacm": dacm.checkbox("DACM", value=True if eh_admin else bool(row["acesso_dacm"]),
+                                  disabled=eh_admin, key=f"ac_{login}_dacm",
+                                  label_visibility="collapsed"),
+            "conciliador": conc.checkbox("Conciliador",
+                                         value=True if eh_admin else bool(row["acesso_conciliador"]),
+                                         disabled=eh_admin, key=f"ac_{login}_conciliador",
+                                         label_visibility="collapsed"),
+            "glosa": glosa.checkbox("Glosa", value=True if eh_admin else bool(row["acesso_glosa"]),
+                                    disabled=eh_admin, key=f"ac_{login}_glosa",
+                                    label_visibility="collapsed"),
+            "cobranca": cob.checkbox("Cobrança",
+                                     value=True if eh_admin else bool(row["acesso_contas_receber"]),
+                                     disabled=eh_admin, key=f"ac_{login}_cobranca",
+                                     label_visibility="collapsed"),
+        }
     if st.form_submit_button("Salvar acessos", type="primary"):
-        for login, valor in acessos.items():
-            banco.definir_acesso_contas_receber(conn, login, valor)
+        for row in banco.listar_usuarios(conn):
+            if row["admin"]:
+                continue
+            m = acessos[row["login"]]
+            banco.definir_acesso_dacm(conn, row["login"], m["dacm"])
+            banco.definir_acesso_conciliador(conn, row["login"], m["conciliador"])
+            banco.definir_acesso_glosa(conn, row["login"], m["glosa"])
+            banco.definir_acesso_contas_receber(conn, row["login"], m["cobranca"])
         st.success("Acessos atualizados.")
-        st.rerun()
-
-st.markdown(f"#### {icone('list', 18)} Acesso aos Recursos de Glosa",
-            unsafe_allow_html=True)
-st.caption("Usuários marcados veem o card dos Recursos de Glosa no portal "
-           "(o sistema pede o login próprio de lá, por CPF e senha).")
-with st.form("acesso_glosa"):
-    acessos_glosa = {}
-    for row in banco.listar_usuarios(conn):
-        acessos_glosa[row["login"]] = st.checkbox(
-            f"{row['login']} ({row['nome']})", value=bool(row["acesso_glosa"]))
-    if st.form_submit_button("Salvar acessos aos Recursos de Glosa", type="primary"):
-        for login, valor in acessos_glosa.items():
-            banco.definir_acesso_glosa(conn, login, valor)
-        st.success("Acessos aos Recursos de Glosa atualizados.")
         st.rerun()
 
 st.markdown(f"#### {icone('camera', 18)} Foto do usuário (login)", unsafe_allow_html=True)
