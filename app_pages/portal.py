@@ -16,13 +16,6 @@ with c1:
         st.caption("Integração automática WPD-26 + Não Identificado.")
         if st.button("Abrir Atualização PF", type="tertiary"):
             st.switch_page("app_pages/processamento.py")
-    if usuario.get("admin") or usuario.get("acesso_glosa"):
-        with st.container(border=True):
-            st.markdown(f"{icone('list', 22, '#1C5A8A')} **Recursos de Glosa**",
-                        unsafe_allow_html=True)
-            st.caption("Fila de glosas e demonstrativos (DACM) da Amil.")
-            st.link_button(label="Abrir Recursos de Glosa",
-                           url="https://pf.lsm.ia.br/glosa/", type="tertiary")
 with c2:
     with st.container(border=True):
         st.markdown(f"{icone('file-spreadsheet', 22, '#1C5A8A')} **DACM × FATURAMENTO**",
@@ -37,5 +30,28 @@ with c3:
         st.caption("Conciliação entre os arquivos DACM e BAIXAS dos convênios.")
         st.link_button(label="Abrir Conciliador",
                        url="https://pf.lsm.ia.br/conciliador/", type="tertiary")
+
+# Segunda linha: os sistemas com permissão própria, lado a lado
+# (pedido do Leonardo em 09/10: Cobrança ao lado de Recursos de Glosa).
+tem_glosa = usuario.get("admin") or usuario.get("acesso_glosa")
+tem_cobranca = usuario.get("admin") or usuario.get("acesso_contas_receber")
+if tem_glosa or tem_cobranca:
+    d1, d2, _ = st.columns(3)
+    with d1:
+        if tem_glosa:
+            with st.container(border=True):
+                st.markdown(f"{icone('list', 22, '#1C5A8A')} **Recursos de Glosa**",
+                            unsafe_allow_html=True)
+                st.caption("Fila de glosas e demonstrativos (DACM) da Amil.")
+                st.link_button(label="Abrir Recursos de Glosa",
+                               url="https://pf.lsm.ia.br/glosa/", type="tertiary")
+    with d2:
+        if tem_cobranca:
+            with st.container(border=True):
+                st.markdown(f"{icone('hand-coins', 22, '#1C5A8A')} **Cobrança**",
+                            unsafe_allow_html=True)
+                st.caption("Do registro ao recebimento, convênio a convênio.")
+                st.link_button(label="Abrir Cobrança",
+                               url="https://pf.lsm.ia.br/cobranca/", type="tertiary")
 
 st.markdown(f'<div class="app-footer">{VERSAO}</div>', unsafe_allow_html=True)

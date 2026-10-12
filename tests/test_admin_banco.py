@@ -1,4 +1,5 @@
-"""Testes das funções de administração: redefinir_senha e remover_usuario."""
+"""Testes das funções de administração: redefinir_senha, definir_senha e
+remover_usuario."""
 import banco
 
 
@@ -6,6 +7,19 @@ def _conn(tmp_path):
     conn = banco.conectar(str(tmp_path / "pf.db"))
     banco.inicializar_banco(conn)
     return conn
+
+
+def test_definir_senha_troca_e_rejeita_curta_ou_inexistente(tmp_path):
+    """definir_senha é o caminho do próprio usuário (auth.trocar_senha):
+    não mexe em falhas/bloqueio — isso é do redefinir_senha (admin)."""
+    conn = _conn(tmp_path)
+    banco.criar_usuario(conn, "leo", "Leo", "senha12345")
+    assert banco.definir_senha(conn, "leo", "curta") is False
+    assert banco.definir_senha(conn, "fantasma", "senhaNova123") is False
+    assert banco.definir_senha(conn, "leo", "novaSenha99") is True
+    assert banco.autenticar(conn, "leo", "novaSenha99") is not None
+    assert banco.autenticar(conn, "leo", "senha12345") is None
+    conn.close()
 
 
 def test_redefinir_senha_autentica_com_a_nova(tmp_path):

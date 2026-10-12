@@ -34,6 +34,16 @@ from core import (
 )
 
 
+def _render_log(texto: str) -> None:
+    """Bloco padrão do log de execução (caixa com rolagem + botão de baixar)."""
+    with st.container(height=450, border=True):
+        st.code(texto, language=None, line_numbers=False)
+    st.download_button("Baixar log da execução",
+                       data=texto,
+                       file_name=f"log_execucao_{datetime.now().strftime('%Y%m%d')}.txt",
+                       mime="text/plain")
+
+
 def agregar_para_banco(df_ni: pd.DataFrame) -> pd.DataFrame:
     """Agrega o df_ni da Fase 1 em resumos diários por convênio (mesmas regras
     de limpeza da página Resumo do dia)."""
@@ -121,7 +131,8 @@ col_acoes, col_status = st.columns([1.5, 1], gap="large")
 with col_acoes:
     st.markdown(f"### {icone('play', 20, '#1C5A8A')} Executar Processamento", unsafe_allow_html=True)
 
-    st.markdown("### 📂 Arquivos do dia")
+    st.markdown(f"#### {icone('folder', 20, '#1C5A8A')} Arquivos do dia",
+                unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     arquivos = {
         "WPD-26.xls": col1.file_uploader("WPD-26 (.xls)", type=["xls"], key="up_wpd"),
@@ -296,13 +307,7 @@ if executar and not st.session_state.em_andamento:
                 f"Na página **Histórico** você vê o log completo desta execução{trecho}."
             )
 
-    with st.container(height=450, border=True):
-        st.code(log_texto, language=None, line_numbers=False)
-
-    st.download_button("Baixar log da execução",
-                       data=log_texto,
-                       file_name=f"log_execucao_{datetime.now().strftime('%Y%m%d')}.txt",
-                       mime="text/plain")
+    _render_log(log_texto)
 
     if sucesso and os.path.exists(xlsx_hias_final):
         with open(xlsx_hias_final, "rb") as f:
@@ -320,12 +325,7 @@ elif st.session_state.ultimo_log:
         st.success("Última execução concluída com sucesso.")
     else:
         st.error("Última execução concluída com erro.")
-    with st.container(height=450, border=True):
-        st.code(st.session_state.ultimo_log, language=None, line_numbers=False)
-    st.download_button("Baixar log da execução",
-                       data=st.session_state.ultimo_log,
-                       file_name=f"log_execucao_{datetime.now().strftime('%Y%m%d')}.txt",
-                       mime="text/plain")
+    _render_log(st.session_state.ultimo_log)
     st.markdown(f'<div class="app-footer">{VERSAO}</div>', unsafe_allow_html=True)
 
 else:

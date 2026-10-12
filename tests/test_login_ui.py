@@ -145,8 +145,10 @@ def test_exigir_login_tem_login_senha_entrar_em_portugues():
     with open(auth.__file__, encoding="utf-8") as f:
         src = f.read()
     assert 'st.text_input("Login"' in src
-    assert "Digite seu CPF" in src
-    assert "Digite seu login" not in src
+    # 12/10 (a pedido do Leonardo): o login volta a ser sem CPF — vale outra
+    # vez o placeholder original "Digite seu login" (de antes de 30/09).
+    assert "Digite seu login" in src
+    assert "Digite seu CPF" not in src
     assert "Digite seu usuário" not in src
     assert '"Lembrar de mim"' in src
     assert '"Esqueceu a senha?"' in src
@@ -158,14 +160,14 @@ def test_exigir_login_tem_login_senha_entrar_em_portugues():
 
 def test_exigir_login_tem_rodape_desenvolvedor():
     """Rodapé da tela de login: mesmo crédito padrão do app
-    (13/09, a pedido — 'deixa todas iguais'). O texto completo fica em
-    ui_comum.VERSAO (teste de igualdade em test_ui_comum); aqui o markdown
-    é montado em literais de várias linhas, então confiro os pedaços."""
+    (13/09, a pedido — 'deixa todas iguais'). Desde 12/10 o texto vem de
+    ui_comum.VERSAO (fonte única — antes era um literal em auth.py que
+    envelhecia a cada versão nova); aqui só se confere que o login usa a
+    constante e mantém a classe do rodapé."""
     import auth
     with open(auth.__file__, encoding="utf-8") as f:
         src = f.read()
-    assert "Desenvolvedor: Leonardo Martins" in src
-    assert "Revisado por Claude Code (Anthropic)" in src
-    assert "V 4.2026.0913" in src
-    assert "Streamlit + Lucide" in src
+    assert "VERSAO" in src
+    assert "Desenvolvedor: Leonardo Martins" in ui_comum.VERSAO
+    assert "Streamlit + Lucide" in ui_comum.VERSAO
     assert ".login-rodape" in ui_comum.LOGIN_CSS

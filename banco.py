@@ -75,40 +75,38 @@ def conectar(caminho=None):
     return conn
 
 
-def _migrar_acesso_contas_receber(conn):
-    """Garante usuarios.acesso_contas_receber (bancos criados antes da feature)."""
+def _garantir_coluna(conn, nome):
+    """Cria a coluna usuarios.<nome> se o banco for anterior à feature."""
     colunas = [r["name"] for r in conn.execute("PRAGMA table_info(usuarios)").fetchall()]
-    if "acesso_contas_receber" not in colunas:
-        conn.execute("ALTER TABLE usuarios ADD COLUMN acesso_contas_receber "
-                     "INTEGER NOT NULL DEFAULT 0")
-
-
-def _migrar_acesso_glosa(conn):
-    """Garante usuarios.acesso_glosa (bancos criados antes da feature)."""
-    colunas = [r["name"] for r in conn.execute("PRAGMA table_info(usuarios)").fetchall()]
-    if "acesso_glosa" not in colunas:
-        conn.execute("ALTER TABLE usuarios ADD COLUMN acesso_glosa "
-                     "INTEGER NOT NULL DEFAULT 0")
-
-
-def _migrar_acesso_pediu_chegou(conn):
-    """Garante usuarios.acesso_pediu_chegou (bancos criados antes da feature)."""
-    colunas = [r["name"] for r in conn.execute("PRAGMA table_info(usuarios)").fetchall()]
-    if "acesso_pediu_chegou" not in colunas:
-        conn.execute("ALTER TABLE usuarios ADD COLUMN acesso_pediu_chegou "
+    if nome not in colunas:
+        conn.execute(f"ALTER TABLE usuarios ADD COLUMN {nome} "
                      "INTEGER NOT NULL DEFAULT 0")
 
 
 def inicializar_banco(conn):
     conn.executescript(SCHEMA)
-    _migrar_acesso_contas_receber(conn)
-    _migrar_acesso_glosa(conn)
-    _migrar_acesso_pediu_chegou(conn)
+    for coluna in ("acesso_contas_receber", "acesso_glosa", "acesso_pediu_chegou"):
+        _garantir_coluna(conn, coluna)
     conn.commit()
 
 
 def _hash_senha(senha: str) -> str:
     return bcrypt.hashpw(senha.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def definir_senha(conn, login, senha):
+    """Troca a senha do próprio usuário (via auth.trocar_senha): re-hash
+    bcrypt. False se a senha for curta ou o login não existir. Diferente de
+    redefinir_senha (uso administrativo), NÃO mexe em falhas/bloqueio."""
+    if len(senha) < 8:
+        return False
+    row = conn.execute("SELECT id FROM usuarios WHERE login=?", (login,)).fetchone()
+    if row is None:
+        return False
+    conn.execute("UPDATE usuarios SET senha_hash=? WHERE id=?",
+                 (_hash_senha(senha), row["id"]))
+    conn.commit()
+    return True
 
 
 def criar_usuario(conn, login, nome, senha, admin=False):

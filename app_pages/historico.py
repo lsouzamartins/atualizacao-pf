@@ -3,7 +3,8 @@ import os
 import pandas as pd
 import streamlit as st
 import banco
-from ui_comum import icone, formatar_brl, formatar_data_br, pastas, VERSAO
+from ui_comum import (icone, formatar_brl, formatar_data_br,
+                      formatar_data_hora_br, pastas, VERSAO)
 
 st.markdown(f"### {icone('calendar', 20, '#1C5A8A')} Histórico", unsafe_allow_html=True)
 
@@ -22,16 +23,16 @@ if not execucoes:
     st.info("Nenhuma execução registrada ainda.")
 else:
     rotulos_status = {
-        "em_andamento": "⏳ em andamento",
-        "sucesso": "✅ sucesso",
-        "falha": "❌ falha",
+        "em_andamento": "Em andamento",
+        "sucesso": "Sucesso",
+        "falha": "Falha",
     }
     linhas = [
         {
             "Execução": r["id"],
             "Usuário": r["usuario"],
-            "Início": r["inicio"][:19].replace("T", " "),
-            "Fim": (r["fim"][:19].replace("T", " ") if r["fim"] else "—"),
+            "Início": formatar_data_hora_br(r["inicio"]),
+            "Fim": (formatar_data_hora_br(r["fim"]) if r["fim"] else "—"),
             "Status": rotulos_status.get(r["status"], r["status"]),
             "Mensagem": r["mensagem"] or "",
         }

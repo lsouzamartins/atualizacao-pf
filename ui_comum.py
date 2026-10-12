@@ -15,7 +15,7 @@ import streamlit as st
 from core import obter_pasta_raiz, garantir_pastas
 
 
-VERSAO = "Desenvolvedor: Leonardo Martins · Revisado por Claude Code (Anthropic) · V 4.2026.0913 · Streamlit + Lucide"
+VERSAO = "Desenvolvedor: Leonardo Martins · Revisado por Claude Code (Anthropic) · V 4.2026.1012 · Streamlit + Lucide"
 
 # ---------------------------------------------------------------------------
 # CAMINHOS PRINCIPAIS
@@ -337,6 +337,7 @@ _LUCIDE = {
     'calendar':           '<rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/>',
     'circle-check':       '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
     'circle-x':           '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+    'database':           '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/>',
     'file-spreadsheet':   '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h2"/><path d="M8 17h2"/><path d="M14 13h2"/><path d="M14 17h2"/>',
     'folder':             '<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/>',
     'folder-output':      '<path d="M2 7.5V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2"/><path d="M2 13h10"/><path d="m5 10-3 3 3 3"/>',
@@ -415,6 +416,15 @@ def formatar_data_br(data_iso: str) -> str:
     except (ValueError, AttributeError):
         pass
     return data_iso
+
+
+def formatar_data_hora_br(valor_iso: str) -> str:
+    """'2026-09-01T14:30:00' -> '01-09-2026 14:30' (Histórico: Início/Fim).
+    Fora do padrão ISO, a entrada volta como veio."""
+    if not valor_iso or "T" not in valor_iso:
+        return valor_iso or ""
+    data, _, hora = valor_iso.partition("T")
+    return f"{formatar_data_br(data)} {hora[:5]}"
 
 
 # ==============================================================================

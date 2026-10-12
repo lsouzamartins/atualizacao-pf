@@ -58,10 +58,13 @@ with col_sair:
 # ==============================================================================
 # NAVEGAÇÃO
 # ==============================================================================
+usuario_sessao = st.session_state.get("usuario", {})
 paginas = [
     st.Page(p["path"], title=p["titulo"], icon=p["icone"], default=p["default"])
     for p in navegacao.montar_paginas(
-        st.session_state.get("usuario", {}).get("acesso_contas_receber", False))
+        usuario_sessao.get("acesso_contas_receber", False),
+        usuario_sessao.get("acesso_glosa", False),
+        usuario_sessao.get("admin", False))
 ]
 pagina = st.navigation(paginas, position="top")
 pagina.run()

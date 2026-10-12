@@ -3,10 +3,11 @@ import ui_comum
 
 def test_versao_rodape_padronizado():
     """Rodapé padrão (13/09, a pedido — 'deixa todas iguais'): o crédito do
-    app passa de 'Criado por' para 'Desenvolvedor:' e a versão vira a da
-    rodada 13/09; o rodapé do login usa o MESMO texto."""
+    app passa de 'Criado por' para 'Desenvolvedor:'; a versão sobe a cada
+    rodada de publicação (atual: pente fino de 12/10). O rodapé do login usa
+    o MESMO texto, via ui_comum.VERSAO."""
     assert ui_comum.VERSAO == ("Desenvolvedor: Leonardo Martins · Revisado por "
-                               "Claude Code (Anthropic) · V 4.2026.0913 · "
+                               "Claude Code (Anthropic) · V 4.2026.1012 · "
                                "Streamlit + Lucide")
 
 
@@ -18,6 +19,16 @@ def test_formatar_data_br_converte_iso_para_br():
 def test_formatar_data_br_devolve_entrada_quando_nao_e_iso():
     assert ui_comum.formatar_data_br("01-09-2026") == "01-09-2026"
     assert ui_comum.formatar_data_br("") == ""
+
+
+def test_formatar_data_hora_br_converte_iso_com_hora():
+    assert ui_comum.formatar_data_hora_br(
+        "2026-09-01T14:30:00.123456") == "01-09-2026 14:30"
+
+
+def test_formatar_data_hora_br_devolve_entrada_quando_nao_e_iso():
+    assert ui_comum.formatar_data_hora_br("") == ""
+    assert ui_comum.formatar_data_hora_br("ontem") == "ontem"
 
 
 def test_badge_status_contem_rotulo_e_cor():
@@ -45,10 +56,11 @@ def test_barra_cabecalho_com_slogan():
 def test_icones_do_portal_e_das_paginas_existem_no_lucide():
     """Regressão: icone() devolve '' silenciosamente para nomes fora do _LUCIDE —
     os ícones do portal pós-login e das páginas precisam existir no set
-    para o visual não sumir sem erro."""
+    para o visual não sumir sem erro. 'database' e 'folder' entraram em
+    12/10 (o database era usado no Processamento sem existir no set)."""
     from ui_comum import _LUCIDE
     for nome in ("home", "play-circle", "file-spreadsheet", "arrow-left-right",
-                 "layout-dashboard", "upload",
+                 "layout-dashboard", "upload", "database", "folder",
                  "history", "chart-column", "alarm-clock", "bell-ring", "trending-up",
                  "list", "triangle-alert", "percent", "clock", "circle-minus",
                  "file-down"):

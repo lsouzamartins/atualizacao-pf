@@ -26,6 +26,15 @@ def test_senha_fraca_rejeitada(tmp_path):
     conn.close()
 
 
+def test_usuario_sessao_carrega_as_permissoes():
+    """12/10: o dict da sessão passou a incluir acesso_glosa — sem ele, o
+    card de Recursos de Glosa do portal nunca aparecia para não-admin."""
+    d = auth._usuario_sessao({"login": "leo", "admin": 1,
+                              "acesso_contas_receber": 0, "acesso_glosa": 1})
+    assert d == {"login": "leo", "admin": True,
+                 "acesso_contas_receber": False, "acesso_glosa": True}
+
+
 def _fake_st(monkeypatch, session_state):
     """st fake: session_state como dict e html() que grava o script recebido."""
     chamadas = []
@@ -86,3 +95,20 @@ def test_restaurar_sessao_marca_lembrar(tmp_path, monkeypatch):
     assert auth._restaurar_sessao(token) is True
     assert ss["autenticado"] is True
     assert ss["lembrar_sessao"] is True
+
+
+def test_restaurar_sessao_traz_o_acesso_glosa(tmp_path, monkeypatch):
+    """Regressão de 12/10: mesmo restaurando pelo cookie ('Lembrar de mim'),
+    o dict da sessão leva acesso_glosa — o card do portal depende dele."""
+    conn = _conn(tmp_path)
+    banco.criar_usuario(conn, "leo", "Leo", "senha12345")
+    banco.definir_acesso_glosa(conn, "leo", True)
+    token = banco.criar_sessao(conn, "leo")
+    conn.close()
+    monkeypatch.setattr(auth, "_conexao",
+                        lambda: banco.conectar(str(tmp_path / "pf.db")))
+    ss = {}
+    _fake_st(monkeypatch, ss)
+    assert auth._restaurar_sessao(token) is True
+    assert ss["usuario"]["acesso_glosa"] is True
+    assert ss["usuario"]["acesso_contas_receber"] is False

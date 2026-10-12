@@ -69,9 +69,10 @@ with st.form("remover_usuario"):
             else:
                 st.error(resultado["erro"])
 
-st.markdown(f"#### {icone('layout-dashboard', 18)} Acesso ao portal (Início)",
+st.markdown(f"#### {icone('layout-dashboard', 18)} Acesso ao portal (Início) e à Cobrança",
             unsafe_allow_html=True)
-st.caption("Usuários marcados veem o portal (Início) com os atalhos dos sistemas.")
+st.caption("Usuários marcados veem o portal (Início) com os atalhos dos sistemas "
+           "e o card da Cobrança.")
 with st.form("acesso_contas_receber"):
     acessos = {}
     for row in banco.listar_usuarios(conn):
@@ -83,19 +84,19 @@ with st.form("acesso_contas_receber"):
         st.success("Acessos atualizados.")
         st.rerun()
 
-st.markdown(f"#### {icone('list', 18)} Acesso ao Recursos de Glosa",
+st.markdown(f"#### {icone('list', 18)} Acesso aos Recursos de Glosa",
             unsafe_allow_html=True)
-st.caption("Usuários marcados veem o card do Recursos de Glosa no portal "
+st.caption("Usuários marcados veem o card dos Recursos de Glosa no portal "
            "(o sistema pede o login próprio de lá, por CPF e senha).")
 with st.form("acesso_glosa"):
     acessos_glosa = {}
     for row in banco.listar_usuarios(conn):
         acessos_glosa[row["login"]] = st.checkbox(
             f"{row['login']} ({row['nome']})", value=bool(row["acesso_glosa"]))
-    if st.form_submit_button("Salvar acessos ao glosa", type="primary"):
+    if st.form_submit_button("Salvar acessos aos Recursos de Glosa", type="primary"):
         for login, valor in acessos_glosa.items():
             banco.definir_acesso_glosa(conn, login, valor)
-        st.success("Acessos ao Recursos de Glosa atualizados.")
+        st.success("Acessos aos Recursos de Glosa atualizados.")
         st.rerun()
 
 st.markdown(f"#### {icone('camera', 18)} Foto do usuário (login)", unsafe_allow_html=True)

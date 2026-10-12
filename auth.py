@@ -10,7 +10,7 @@ import streamlit as st
 
 import banco
 import fotos
-from ui_comum import injetar_css_login, PASTA_FOTOS
+from ui_comum import injetar_css_login, PASTA_FOTOS, VERSAO
 
 NOME_COOKIE = "pf_sessao"
 
@@ -28,15 +28,24 @@ def trocar_senha(conn, login, senha_antiga, senha_nova):
         return False
     if not verificar_credenciais(conn, login, senha_antiga):
         return False
-    novo_hash = banco._hash_senha(senha_nova)
-    conn.execute("UPDATE usuarios SET senha_hash=? WHERE login=?",
-                 (novo_hash, login))
-    conn.commit()
-    return True
+    return banco.definir_senha(conn, login, senha_nova)
 
 
 def usuario_atual():
     return st.session_state.get("usuario")
+
+
+def _usuario_sessao(usuario) -> dict:
+    """Dict do usuário guardado na sessão da aba (só o que a interface usa).
+
+    12/10/2026: passou a carregar acesso_glosa — sem ele, o card de Recursos
+    de Glosa do portal nunca aparecia para quem não é admin (o portal lê
+    usuario.get("acesso_glosa"), que vinha sempre None).
+    """
+    return {"login": usuario["login"],
+            "admin": bool(usuario["admin"]),
+            "acesso_contas_receber": bool(usuario["acesso_contas_receber"]),
+            "acesso_glosa": bool(usuario["acesso_glosa"])}
 
 
 def _avatar_login(login_digitado):
@@ -81,10 +90,7 @@ def _restaurar_sessao(token):
     if usuario is None:
         return False
     st.session_state["autenticado"] = True
-    st.session_state["usuario"] = {"login": usuario["login"],
-                                   "admin": bool(usuario["admin"]),
-                                   "acesso_contas_receber":
-                                       bool(usuario["acesso_contas_receber"])}
+    st.session_state["usuario"] = _usuario_sessao(usuario)
     st.session_state["token_sessao"] = token
     st.session_state["lembrar_sessao"] = True  # sessão veio do cookie: mantém
     return True
@@ -123,7 +129,7 @@ def exigir_login():
             # O empty() reserva o espaço no topo do cartão; o markdown o preenche a
             # cada rerun (o on_change do campo dispara rerun a cada tecla digitada).
             slot_avatar = st.empty()
-            login = st.text_input("Login", placeholder="Digite seu CPF",
+            login = st.text_input("Login", placeholder="Digite seu login",
                                   label_visibility="collapsed", key="login_usuario",
                                   on_change=lambda: None)
             senha = st.text_input("Senha", type="password", placeholder="Digite sua senha",
@@ -152,10 +158,7 @@ def exigir_login():
                         if usuario is not None:
                             token = banco.criar_sessao(conn, login.strip())
                             st.session_state["autenticado"] = True
-                            st.session_state["usuario"] = {"login": login.strip(),
-                                                           "admin": bool(usuario["admin"]),
-                                                           "acesso_contas_receber":
-                                                               bool(usuario["acesso_contas_receber"])}
+                            st.session_state["usuario"] = _usuario_sessao(usuario)
                             st.session_state["token_sessao"] = token
                             st.session_state["lembrar_sessao"] = bool(lembrar)
                             st.rerun()
@@ -169,11 +172,10 @@ def exigir_login():
                 st.info("Esqueceu a senha? Fale com o administrador do sistema "
                         "para redefini-la.")
     # Rodapé da tela de login: mesmo crédito padrão do app (13/09, a pedido —
-    # 'deixa todas iguais').
-    st.markdown(
-        '<div class="login-rodape">Desenvolvedor: Leonardo Martins · Revisado por Claude Code (Anthropic) · V 4.2026.0913 · Streamlit + Lucide</div>',
-        unsafe_allow_html=True,
-    )
+    # 'deixa todas iguais'). Desde 12/10 o texto vem de ui_comum.VERSAO
+    # (fonte única) — quando a versão sobe, o login acompanha.
+    st.markdown(f'<div class="login-rodape">{VERSAO}</div>',
+                unsafe_allow_html=True)
     st.stop()
 
 
