@@ -27,12 +27,13 @@ def test_senha_fraca_rejeitada(tmp_path):
 
 
 def test_usuario_sessao_carrega_as_permissoes():
-    """12/10: o dict da sessão passou a incluir acesso_glosa — sem ele, o
-    card de Recursos de Glosa do portal nunca aparecia para não-admin."""
+    """12/10: o dict da sessão inclui acesso_glosa; 06/11: inclui acesso_ponto."""
     d = auth._usuario_sessao({"login": "leo", "admin": 1,
-                              "acesso_contas_receber": 0, "acesso_glosa": 1})
+                              "acesso_contas_receber": 0, "acesso_glosa": 1,
+                              "acesso_ponto": 0})
     assert d == {"login": "leo", "admin": True,
-                 "acesso_contas_receber": False, "acesso_glosa": True}
+                 "acesso_contas_receber": False, "acesso_glosa": True,
+                 "acesso_ponto": False}
 
 
 def _fake_st(monkeypatch, session_state):
@@ -112,3 +113,18 @@ def test_restaurar_sessao_traz_o_acesso_glosa(tmp_path, monkeypatch):
     assert auth._restaurar_sessao(token) is True
     assert ss["usuario"]["acesso_glosa"] is True
     assert ss["usuario"]["acesso_contas_receber"] is False
+
+
+def test_restaurar_sessao_traz_o_acesso_ponto(tmp_path, monkeypatch):
+    """O cookie de 7 dias também precisa carregar a permissão do Ponto."""
+    conn = _conn(tmp_path)
+    banco.criar_usuario(conn, "leo", "Leo", "senha12345")
+    banco.definir_acesso_ponto(conn, "leo", True)
+    token = banco.criar_sessao(conn, "leo")
+    conn.close()
+    monkeypatch.setattr(auth, "_conexao",
+                        lambda: banco.conectar(str(tmp_path / "pf.db")))
+    ss = {}
+    _fake_st(monkeypatch, ss)
+    assert auth._restaurar_sessao(token) is True
+    assert ss["usuario"]["acesso_ponto"] is True

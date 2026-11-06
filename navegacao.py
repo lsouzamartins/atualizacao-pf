@@ -9,14 +9,13 @@ A aba Administração só existe para admin (12/10).
 """
 
 
-def montar_paginas(acesso_cr, acesso_glosa=False, admin=False):
+def montar_paginas(acesso_cr, acesso_glosa=False, admin=False, acesso_ponto=False):
     """Lista de páginas [{path, titulo, icone, default}] para o st.navigation.
 
-    12/10/2026: o Início passou a entrar também com acesso_glosa (é onde o
-    card dos Recursos de Glosa aparece) e a aba Administração ficou restrita
-    a admin — antes aparecia para todos e devolvia 'Acesso restrito'.
+    06/11/2026: o parâmetro acesso_ponto inclui a página Ponto no nav; quem
+    tem só essa permissão também vê o Início (portal).
     """
-    tem_portal = acesso_cr or acesso_glosa
+    tem_portal = acesso_cr or acesso_glosa or acesso_ponto
     base_pf = [
         {"path": "app_pages/processamento.py", "titulo": "Processamento",
          "icone": ":material/play_circle:", "default": not tem_portal},
@@ -34,4 +33,8 @@ def montar_paginas(acesso_cr, acesso_glosa=False, admin=False):
     pf = [{**p, "titulo": f"PF · {p['titulo']}", "default": False} for p in base_pf]
     portal = {"path": "app_pages/portal.py", "titulo": "Início",
               "icone": ":material/home:", "default": True}
-    return [portal] + pf
+    paginas = [portal]
+    if acesso_ponto:
+        paginas.append({"path": "app_pages/ponto.py", "titulo": "Ponto",
+                        "icone": ":material/access_time:", "default": False})
+    return paginas + pf

@@ -47,3 +47,17 @@ def test_so_acesso_glosa_tambem_ganha_o_portal():
     assert "PF · Processamento" in titulos
     assert "Administração" not in titulos
     assert len(paginas) == 4
+
+
+def test_ponto_entra_no_nav_com_permissao():
+    paginas = navegacao.montar_paginas(False, acesso_ponto=True)
+    titulos = [p["titulo"] for p in paginas]
+    assert titulos[0] == "Início" and paginas[0]["default"] is True
+    assert titulos[1] == "Ponto"
+    assert "PF · Processamento" in titulos
+    assert "Administração" not in titulos
+
+
+def test_sem_permissao_ponto_nao_aparece():
+    paginas = navegacao.montar_paginas(False)
+    assert "Ponto" not in [p["titulo"] for p in paginas]

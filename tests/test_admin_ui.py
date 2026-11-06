@@ -42,3 +42,9 @@ def test_admin_acessos_plataformas_um_botao_e_flags_novas():
     assert "definir_acesso_dacm" in FONTE
     assert "definir_acesso_conciliador" in FONTE
     assert "value=True, disabled=True" in FONTE  # PF travado (e admin)
+
+
+def test_admin_acessos_plataformas_inclui_ponto():
+    """06/11: a tabela única de acessos ganhou a coluna Ponto."""
+    assert "definir_acesso_ponto" in FONTE
+    assert '"Ponto"' in FONTE

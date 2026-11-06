@@ -64,7 +64,8 @@ paginas = [
     for p in navegacao.montar_paginas(
         usuario_sessao.get("acesso_contas_receber", False),
         usuario_sessao.get("acesso_glosa", False),
-        usuario_sessao.get("admin", False))
+        usuario_sessao.get("admin", False),
+        acesso_ponto=usuario_sessao.get("acesso_ponto", False))
 ]
 pagina = st.navigation(paginas, position="top")
 pagina.run()

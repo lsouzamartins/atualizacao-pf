@@ -45,7 +45,8 @@ def _usuario_sessao(usuario) -> dict:
     return {"login": usuario["login"],
             "admin": bool(usuario["admin"]),
             "acesso_contas_receber": bool(usuario["acesso_contas_receber"]),
-            "acesso_glosa": bool(usuario["acesso_glosa"])}
+            "acesso_glosa": bool(usuario["acesso_glosa"]),
+            "acesso_ponto": bool(usuario["acesso_ponto"])}
 
 
 def _avatar_login(login_digitado):

@@ -61,3 +61,11 @@ def test_portal_admin_ve_todas_as_plataformas():
     assert "DACM × FATURAMENTO" in FONTE
     assert "Conciliador de Convênios" in FONTE
     assert "Recursos de Glosa" in FONTE
+
+
+def test_portal_card_ponto_condicionado():
+    """06/11: card do Controle de Ponto na terceira coluna da segunda linha,
+    visível só com a permissão (ou para admin)."""
+    assert "Controle de Ponto" in FONTE
+    assert 'usuario.get("acesso_ponto")' in FONTE
+    assert 'st.switch_page("app_pages/ponto.py")' in FONTE

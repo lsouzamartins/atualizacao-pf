@@ -72,21 +72,23 @@ with st.form("remover_usuario"):
 st.markdown(f"#### {icone('layout-dashboard', 18)} Acessos das plataformas",
             unsafe_allow_html=True)
 st.caption("Atualização da Posição Financeira · DACM × FATURAMENTO · "
-           "Conciliador de Convênios · Recursos de Glosa · Cobrança. "
+           "Conciliador de Convênios · Recursos de Glosa · Cobrança · "
+           "Controle de Ponto. "
            "Caixinha marcada = o usuário vê a plataforma no portal "
            "(a Cobrança também usa esta marca no próprio login). "
            "O DACM e o Conciliador têm login próprio por CPF — a marca "
            "fica guardada aqui para o futuro. O PF é de todo usuário com login.")
 with st.form("acessos_plataformas"):
-    cab = st.columns([2.4, 1, 1, 1.2, 1, 1.2])
+    cab = st.columns([2.4, 1, 1, 1.2, 1, 1.2, 1])
     for col, titulo in zip(cab, ["Usuário", "PF", "DACM", "Conciliador",
-                                 "Glosa", "Cobrança"]):
+                                 "Glosa", "Cobrança", "Ponto"]):
         col.markdown(f"**{titulo}**")
     acessos = {}
     for row in banco.listar_usuarios(conn):
         login = row["login"]
         eh_admin = bool(row["admin"])
-        u, pf, dacm, conc, glosa, cob = st.columns([2.4, 1, 1, 1.2, 1, 1.2])
+        u, pf, dacm, conc, glosa, cob, ponto = st.columns(
+            [2.4, 1, 1, 1.2, 1, 1.2, 1])
         u.write(f"{login} ({row['nome']})")
         # O PF é de todo usuário com login: caixinha travada e marcada.
         pf.checkbox("PF", value=True, disabled=True,
@@ -107,6 +109,10 @@ with st.form("acessos_plataformas"):
                                      value=True if eh_admin else bool(row["acesso_contas_receber"]),
                                      disabled=eh_admin, key=f"ac_{login}_cobranca",
                                      label_visibility="collapsed"),
+            "ponto": ponto.checkbox("Ponto",
+                                    value=True if eh_admin else bool(row["acesso_ponto"]),
+                                    disabled=eh_admin, key=f"ac_{login}_ponto",
+                                    label_visibility="collapsed"),
         }
     if st.form_submit_button("Salvar acessos", type="primary"):
         for row in banco.listar_usuarios(conn):
@@ -117,6 +123,7 @@ with st.form("acessos_plataformas"):
             banco.definir_acesso_conciliador(conn, row["login"], m["conciliador"])
             banco.definir_acesso_glosa(conn, row["login"], m["glosa"])
             banco.definir_acesso_contas_receber(conn, row["login"], m["cobranca"])
+            banco.definir_acesso_ponto(conn, row["login"], m["ponto"])
         st.success("Acessos atualizados.")
         st.rerun()
 

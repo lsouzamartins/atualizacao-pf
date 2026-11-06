@@ -35,8 +35,9 @@ with c3:
 # (pedido do Leonardo em 09/10: Cobrança ao lado de Recursos de Glosa).
 tem_glosa = usuario.get("admin") or usuario.get("acesso_glosa")
 tem_cobranca = usuario.get("admin") or usuario.get("acesso_contas_receber")
-if tem_glosa or tem_cobranca:
-    d1, d2, _ = st.columns(3)
+tem_ponto = usuario.get("admin") or usuario.get("acesso_ponto")
+if tem_glosa or tem_cobranca or tem_ponto:
+    d1, d2, d3 = st.columns(3)
     with d1:
         if tem_glosa:
             with st.container(border=True):
@@ -53,5 +54,13 @@ if tem_glosa or tem_cobranca:
                 st.caption("Do registro ao recebimento, convênio a convênio.")
                 st.link_button(label="Abrir Cobrança",
                                url="https://pf.lsm.ia.br/cobranca/", type="tertiary")
+    with d3:
+        if tem_ponto:
+            with st.container(border=True):
+                st.markdown(f"{icone('clock', 22, '#1C5A8A')} **Controle de Ponto**",
+                            unsafe_allow_html=True)
+                st.caption("Seu banco de horas, atrasos, férias e pendências.")
+                if st.button("Abrir Controle de Ponto", type="tertiary"):
+                    st.switch_page("app_pages/ponto.py")
 
 st.markdown(f'<div class="app-footer">{VERSAO}</div>', unsafe_allow_html=True)
