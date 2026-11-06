@@ -128,6 +128,11 @@ def _csv(tabela):
 def _salvar_manual(dia, tipo, entrada, saida, observacao, login):
     if tipo != "trabalho":
         entrada = saida = None  # férias/feriado/atestado não guardam horário
+        # Força o bloco de sync no rerun: ele recarrega do banco (entrada/
+        # saída NULL no dia especial) e zera os horários antes de os widgets
+        # serem criados. Atribuir direto a ponto_form_entrada/ponto_form_saida
+        # aqui não funciona: os widgets já foram instanciados neste run.
+        st.session_state.pop("ponto_form_data_anterior", None)
     conn = _conexao()
     try:
         banco.inicializar_banco(conn)
@@ -220,6 +225,9 @@ with st.expander("Lançar/editar ponto", expanded=not registros):
         st.session_state["ponto_form_entrada"] = _hora_de(registro.get("entrada"))
         st.session_state["ponto_form_saida"] = _hora_de(registro.get("saida"))
         st.session_state["ponto_form_obs"] = registro.get("observacao") or ""
+        # Sem esta limpeza, um "Confirmo excluir" marcado na data anterior
+        # continuaria valendo para a nova data selecionada.
+        st.session_state.pop("ponto_excluir_confirmar", None)
         st.session_state["ponto_form_data_anterior"] = data_escolhida
     if uploads:
         periodo_de_importado = date.fromisoformat(uploads[0]["periodo_de"])
