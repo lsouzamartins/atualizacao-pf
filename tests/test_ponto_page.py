@@ -55,6 +55,13 @@ def test_pagina_com_dados_mostra_kpis(tmp_path, monkeypatch):
     assert "Horas no período" in texto
 
 
+def test_fonte_tem_botoes_compactos():
+    """06/11, a pedido: os botões da página Ponto usam caixa menor."""
+    assert "BOTOES_CSS" in FONTE
+    assert "min-height: 2.1rem" in FONTE
+    assert "st.markdown(BOTOES_CSS" in FONTE
+
+
 def test_fonte_tem_formulario_manual():
     assert "Lançar/editar ponto" in FONTE
     assert "Excluir dia" in FONTE

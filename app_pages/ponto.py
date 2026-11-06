@@ -150,6 +150,23 @@ CALENDARIO_CSS = """
 """
 
 
+BOTOES_CSS = """
+<style>
+/* 06/11/2026 (a pedido): botões mais compactos na página Ponto. */
+.stApp div.stButton > button[kind],
+.stApp div[data-testid="stFormSubmitButton"] > button,
+.stApp div[data-testid="stDownloadButton"] > button {
+    padding: .35rem .9rem !important;
+    min-height: 2.1rem !important;
+    height: auto !important;
+    font-size: .85rem !important;
+    line-height: 1.25 !important;
+    border-radius: 8px !important;
+}
+</style>
+"""
+
+
 def _cores_celula(dia):
     mapa = {
         "trabalhado": ("#DBEAFE", "#1C5A8A", "1px solid #DBEAFE"),
@@ -380,6 +397,7 @@ if not (usuario.get("admin") or usuario.get("acesso_ponto")):
 
 st.markdown(f"### {icone('clock', 20, '#1C5A8A')} Controle de Ponto",
             unsafe_allow_html=True)
+st.markdown(BOTOES_CSS, unsafe_allow_html=True)
 _mostrar_flash()
 
 hoje = date.today()
