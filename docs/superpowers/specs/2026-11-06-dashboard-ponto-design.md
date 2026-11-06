@@ -29,7 +29,7 @@ A fonte pode ser a planilha **Controle de Ponto.xlsx** (upload) **ou o lançamen
 
 Inspecionado em 06/11/2026 (somente leitura; o arquivo original está protegido por senha, lido localmente para análise).
 
-- Duas abas: **2025** (vazia, formato antigo de 4 colunas: DIA/ENTRADA/SAIDA/Status) e **2026** (formato atual).
+- Duas abas: **2025** (formato antigo de 4 colunas: DIA/ENTRADA/SAIDA/Status; tem 41 linhas preenchidas, mas é ignorada pela regra do ano mais recente — decisão de 06/11/2026) e **2026** (formato atual).
 - Aba 2026: 268 linhas, de **08/04/2026 a 31/12/2026**, colunas:
   `Data`, `Dia`, `Entrada`, `Saída`, `Jornada`, `Horas Trabalhadas`, `Atraso`, `Hora Positiva`, `Hora Negativa`, `Saldo`, `Status`.
 - `Dia` é fórmula `=TEXT(Data;"ddd")`; `Jornada` é fórmula `=IF(WEEKDAY(Data;2)=5;9h;10h)`; as demais colunas calculadas usam fórmulas arrastadas até 23/10/2026 apenas.
@@ -177,7 +177,8 @@ Precedência da classificação: tipo especial (férias/feriado/atestado) > pend
 
 - Aceita `.xlsx` e `.xls`, até 5 MB.
 - Para cada aba, o cabeçalho é localizado na primeira linha. São aceitos os nomes `Data` ou `DIA`, `Entrada`/`ENTRADA`, `Saída`/`SAIDA`/`SAÍDA` e `Status` (comparação sem caixa/acento).
-- Abas sem nenhum valor em Entrada, Saída ou Status são ignoradas com aviso (caso da aba 2025 vazia).
+- Abas sem nenhum valor em Entrada, Saída ou Status são ignoradas com aviso.
+- **Vale apenas a aba do ano mais recente** (decisão de 06/11/2026): abas cujos registros param em anos anteriores são ignoradas com o aviso `Aba '<nome>' ignorada: vale a aba do ano mais recente (<ano>).` Duas abas do mesmo ano somam-se.
 - Se nenhuma aba válida for encontrada, a importação é recusada com mensagem explicando o formato esperado.
 - Datas aceitas: `datetime` ou texto `dd/mm/aaaa`. Horas aceitas: `time`, `datetime`, fração do dia (`float`) ou texto `HH:MM`.
 - **Arquivo protegido:** se o conteúdo for OLE2 com `EncryptedPackage`, a página orienta: “Abra no Excel, salve uma cópia sem senha e envie a cópia”.
@@ -185,6 +186,7 @@ Precedência da classificação: tipo especial (férias/feriado/atestado) > pend
 ### 7.2 Avisos exibidos na prévia
 
 - Aba ignorada (sem dados).
+- Aba de ano anterior ignorada (vale a aba do ano mais recente).
 - Texto não reconhecido em Entrada/Saída.
 - Linhas sem data.
 - Batidas incompletas encontradas.
@@ -307,7 +309,7 @@ Colunas: `Data`, `Dia`, `Entrada`, `Saída`, `Jornada`, `Horas trabalhadas`, `At
 - Saldo acumulado na ordem das datas.
 - Textos com/sem acento e maiúsculas.
 - Duplicidade de data recusada; linha sem data gera aviso.
-- Aba vazia ignorada; nenhuma aba válida gera erro.
+- Aba vazia ignorada; aba de ano anterior ignorada quando há aba de ano mais recente; nenhuma aba válida gera erro.
 - Arquivo protegido gera a mensagem orientativa.
 
 ### `tests/test_banco_ponto.py`
@@ -344,7 +346,7 @@ Colunas: `Data`, `Dia`, `Entrada`, `Saída`, `Jornada`, `Horas trabalhadas`, `At
 - Integração com relógio de ponto.
 - Notificações por e-mail/WhatsApp.
 - Aprovação/espelho de ponto.
-- Suporte dedicado ao formato antigo de 2025 (se a aba tiver dados, o leitor genérico tenta; se estiver vazia, é ignorada).
+- Histórico de anos anteriores: a planilha pode ter abas antigas, mas a dashboard acompanha só o ano mais recente (06/11/2026).
 
 ## 13. Riscos e limitações
 
