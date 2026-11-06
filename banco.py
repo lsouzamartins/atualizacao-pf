@@ -9,7 +9,7 @@ import json
 import secrets
 import hashlib
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import bcrypt
 import pandas as pd
@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
   acesso_pediu_chegou INTEGER NOT NULL DEFAULT 0,
   acesso_dacm INTEGER NOT NULL DEFAULT 0,
   acesso_conciliador INTEGER NOT NULL DEFAULT 0,
+  acesso_ponto INTEGER NOT NULL DEFAULT 0,
   falhas_seguidas INTEGER NOT NULL DEFAULT 0,
   bloqueado_ate TEXT,
   criado_em TEXT NOT NULL
@@ -60,6 +61,30 @@ CREATE TABLE IF NOT EXISTS sessoes (
   expira_em TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sessoes_hash ON sessoes(token_hash);
+CREATE TABLE IF NOT EXISTS ponto_uploads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  usuario TEXT NOT NULL,
+  nome_arquivo TEXT NOT NULL,
+  enviado_em TEXT NOT NULL,
+  periodo_de TEXT NOT NULL,
+  periodo_ate TEXT NOT NULL,
+  linhas INTEGER NOT NULL,
+  avisos TEXT
+);
+CREATE TABLE IF NOT EXISTS ponto_registros (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  upload_id INTEGER REFERENCES ponto_uploads(id),
+  data TEXT NOT NULL,
+  entrada TEXT,
+  saida TEXT,
+  tipo TEXT NOT NULL DEFAULT 'trabalho',
+  observacao TEXT,
+  origem TEXT NOT NULL DEFAULT 'upload',
+  atualizado_em TEXT,
+  atualizado_por TEXT,
+  UNIQUE(data)
+);
+CREATE INDEX IF NOT EXISTS idx_ponto_data ON ponto_registros(data);
 """
 
 BLOQUEIO_MINUTOS = 5
@@ -88,7 +113,7 @@ def _garantir_coluna(conn, nome):
 def inicializar_banco(conn):
     conn.executescript(SCHEMA)
     for coluna in ("acesso_contas_receber", "acesso_glosa", "acesso_pediu_chegou",
-                   "acesso_dacm", "acesso_conciliador"):
+                   "acesso_dacm", "acesso_conciliador", "acesso_ponto"):
         _garantir_coluna(conn, coluna)
     conn.commit()
 
@@ -132,7 +157,7 @@ def listar_usuarios(conn):
     admin e as marcas de acesso das plataformas)."""
     return conn.execute(
         "SELECT id, login, nome, admin, acesso_contas_receber, acesso_glosa, "
-        "acesso_pediu_chegou, acesso_dacm, acesso_conciliador "
+        "acesso_pediu_chegou, acesso_dacm, acesso_conciliador, acesso_ponto "
         "FROM usuarios ORDER BY login").fetchall()
 
 
@@ -168,6 +193,13 @@ def definir_acesso_conciliador(conn, login, valor):
     """Liga/desliga a marca do Conciliador de Convênios para o usuário (12/10:
     a marca fica guardada no portal; o app tem login próprio por CPF)."""
     conn.execute("UPDATE usuarios SET acesso_conciliador=? WHERE login=?",
+                 (1 if valor else 0, login))
+    conn.commit()
+
+
+def definir_acesso_ponto(conn, login, valor):
+    """Liga/desliga o acesso ao Controle de Ponto no portal."""
+    conn.execute("UPDATE usuarios SET acesso_ponto=? WHERE login=?",
                  (1 if valor else 0, login))
     conn.commit()
 
@@ -424,6 +456,105 @@ def historico(conn, de=None, ate=None, convenio=None):
             "WHERE r2.data = r.data)")
     sql += " ORDER BY r.data DESC, e.id DESC"
     return pd.read_sql_query(sql, conn, params=params)
+
+
+# ==============================================================================
+# CONTROLE DE PONTO — uploads e registros diários
+# ==============================================================================
+def salvar_importacao_ponto(conn, usuario, nome_arquivo, registros,
+                            periodo_de, periodo_ate, avisos,
+                            sobrescrever_manuais=False, agora=None):
+    """Grava o upload e os dias em uma transação; devolve o id do upload.
+
+    Preserva os registros com origem 'manual', salvo
+    sobrescrever_manuais=True. Datas fora do arquivo não são tocadas.
+    """
+    agora = agora or datetime.now().isoformat()
+    periodo_de = periodo_de.isoformat() if hasattr(periodo_de, "isoformat") else str(periodo_de)
+    periodo_ate = periodo_ate.isoformat() if hasattr(periodo_ate, "isoformat") else str(periodo_ate)
+    with conn:
+        cursor = conn.execute(
+            "INSERT INTO ponto_uploads (usuario, nome_arquivo, enviado_em, "
+            "periodo_de, periodo_ate, linhas, avisos) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (usuario, nome_arquivo, agora, periodo_de, periodo_ate,
+             len(registros), json.dumps(avisos, ensure_ascii=False)))
+        upload_id = cursor.lastrowid
+        for registro in registros:
+            data = registro["data"]
+            data_iso = data.isoformat() if hasattr(data, "isoformat") else str(data)
+            existente = conn.execute(
+                "SELECT origem FROM ponto_registros WHERE data=?",
+                (data_iso,)).fetchone()
+            if (existente is not None and existente["origem"] == "manual"
+                    and not sobrescrever_manuais):
+                continue
+            conn.execute(
+                "INSERT INTO ponto_registros (upload_id, data, entrada, saida, "
+                "tipo, observacao, origem) VALUES (?, ?, ?, ?, ?, ?, 'upload') "
+                "ON CONFLICT(data) DO UPDATE SET "
+                "upload_id=excluded.upload_id, entrada=excluded.entrada, "
+                "saida=excluded.saida, tipo=excluded.tipo, "
+                "observacao=excluded.observacao, origem='upload', "
+                "atualizado_em=NULL, atualizado_por=NULL",
+                (upload_id, data_iso, registro.get("entrada"),
+                 registro.get("saida"), registro.get("tipo", "trabalho"),
+                 registro.get("observacao")))
+    return upload_id
+
+
+def salvar_registro_manual(conn, data, entrada, saida, tipo, observacao,
+                           usuario, agora=None):
+    """Cria/atualiza um dia com origem 'manual' e registra o autor."""
+    agora = agora or datetime.now().isoformat()
+    data_iso = data.isoformat() if hasattr(data, "isoformat") else str(data)
+    conn.execute(
+        "INSERT INTO ponto_registros (upload_id, data, entrada, saida, tipo, "
+        "observacao, origem, atualizado_em, atualizado_por) "
+        "VALUES (NULL, ?, ?, ?, ?, ?, 'manual', ?, ?) "
+        "ON CONFLICT(data) DO UPDATE SET "
+        "upload_id=NULL, entrada=excluded.entrada, saida=excluded.saida, "
+        "tipo=excluded.tipo, observacao=excluded.observacao, origem='manual', "
+        "atualizado_em=excluded.atualizado_em, "
+        "atualizado_por=excluded.atualizado_por",
+        (data_iso, entrada, saida, tipo, observacao, agora, usuario))
+    conn.commit()
+
+
+def excluir_registro_ponto(conn, data):
+    """Remove o dia; devolve o número de linhas apagadas."""
+    data_iso = data.isoformat() if hasattr(data, "isoformat") else str(data)
+    cursor = conn.execute("DELETE FROM ponto_registros WHERE data=?", (data_iso,))
+    conn.commit()
+    return cursor.rowcount
+
+
+def ultimo_upload_ponto(conn):
+    """Última linha de ponto_uploads (ou None)."""
+    return conn.execute(
+        "SELECT * FROM ponto_uploads ORDER BY id DESC LIMIT 1").fetchone()
+
+
+def listar_uploads_ponto(conn, limite=20):
+    """Uploads mais recentes primeiro."""
+    return conn.execute(
+        "SELECT * FROM ponto_uploads ORDER BY id DESC LIMIT ?", (limite,)).fetchall()
+
+
+def registros_ponto(conn):
+    """Todos os dias, em ordem de data, com data já convertida para date."""
+    linhas = conn.execute(
+        "SELECT data, entrada, saida, tipo, observacao, origem, "
+        "atualizado_em, atualizado_por FROM ponto_registros ORDER BY data").fetchall()
+    return [{
+        "data": date.fromisoformat(linha["data"]),
+        "entrada": linha["entrada"],
+        "saida": linha["saida"],
+        "tipo": linha["tipo"],
+        "observacao": linha["observacao"],
+        "origem": linha["origem"],
+        "atualizado_em": linha["atualizado_em"],
+        "atualizado_por": linha["atualizado_por"],
+    } for linha in linhas]
 
 
 def backup_banco(caminho, destino):
