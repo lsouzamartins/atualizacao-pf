@@ -106,3 +106,18 @@ def test_salvar_dia_especial_zera_horarios_do_formulario(tmp_path, monkeypatch):
     assert at.selectbox(key="ponto_form_tipo").value == "Férias"
     assert at.time_input(key="ponto_form_entrada").value is None
     assert at.time_input(key="ponto_form_saida").value is None
+
+
+def test_pagina_com_dados_mostra_calendario(tmp_path, monkeypatch):
+    at = _app(tmp_path, monkeypatch, registros=[
+        {"data": date(2026, 11, 3), "entrada": "08:00", "saida": "18:00"},
+    ])
+    at.run()
+    assert not at.exception
+    assert any("ponto-grade" in m.value for m in at.markdown)
+
+
+def test_fonte_tem_graficos_e_calendario():
+    assert "Evolução do saldo acumulado" in FONTE
+    assert "Saldo por mês" in FONTE
+    assert "_calendario_html" in FONTE

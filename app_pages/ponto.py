@@ -1,7 +1,9 @@
 """PÁGINA: PONTO — banco de horas pessoal (dashboard e lançamento manual)."""
 from datetime import date, time, timedelta
+from html import escape
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 import banco
@@ -125,6 +127,165 @@ def _csv(tabela):
     return tabela.to_csv(sep=";", index=False).encode("utf-8-sig")
 
 
+CALENDARIO_CSS = """
+<style>
+.ponto-grade { display:grid; grid-template-columns:repeat(7,1fr); gap:4px;
+               margin-top:8px; }
+.ponto-cabecalho { font-size:.75rem; color:#64748B; text-align:center;
+                   padding:4px 0; font-weight:600; }
+.ponto-celula { min-height:64px; border-radius:8px; padding:6px;
+                display:flex; flex-direction:column; gap:2px;
+                font-size:.75rem; box-sizing:border-box; }
+.ponto-celula.fora { background:#FFFFFF; border:1px solid transparent; }
+.ponto-celula.vazia { background:#FFFFFF; border:1px solid #E2E8F0; }
+.ponto-num { font-weight:600; font-size:.85rem; }
+.ponto-marca { opacity:.9; }
+.ponto-legenda { display:flex; flex-wrap:wrap; gap:12px; margin-top:10px;
+                 font-size:.75rem; color:#64748B; }
+.ponto-legenda span { display:inline-flex; align-items:center; gap:4px; }
+.ponto-legenda i { width:10px; height:10px; border-radius:2px;
+                   display:inline-block; }
+</style>
+"""
+
+
+def _cores_celula(dia):
+    mapa = {
+        "trabalhado": ("#DBEAFE", "#1C5A8A", "1px solid #DBEAFE"),
+        "positivo": ("#DCFCE7", "#15803D", "1px solid #DCFCE7"),
+        "negativo": ("#FEE2E2", "#DC2626", "1px solid #FEE2E2"),
+        "extra": ("#DCFCE7", "#15803D", "1px solid #DCFCE7"),
+        "pendente": ("#FEF3C7", "#B45309", "1px solid #FEF3C7"),
+        "outro": ("#FEF3C7", "#B45309", "1px solid #FEF3C7"),
+        "falta": ("#FECACA", "#991B1B", "1px solid #FECACA"),
+        "ferias": ("#E0F2FE", "#0369A1", "1px solid #E0F2FE"),
+        "feriado": ("#F1F5F9", "#64748B", "1px solid #F1F5F9"),
+        "atestado": ("#F3E8FF", "#6B21A8", "1px solid #F3E8FF"),
+        "futuro": ("#FFFFFF", "#64748B", "1px dashed #E2E8F0"),
+        "hoje": ("#FFFFFF", "#1C5A8A", "1px solid #1C5A8A"),
+        "fim_de_semana": ("#F8FAFC", "#64748B", "1px solid #F8FAFC"),
+    }
+    return mapa.get(dia.situacao, ("#FFFFFF", "#64748B", "1px solid #E2E8F0"))
+
+
+def _marca_celula(dia):
+    if dia.situacao in ("positivo", "trabalhado", "negativo", "extra"):
+        return ponto_core.formatar_horas(dia.saldo)
+    if dia.situacao in ("futuro", "fim_de_semana"):
+        return ""
+    return ponto_core.rotulo_situacao(dia.situacao)
+
+
+def _calendario_html(dias, ano, mes):
+    por_data = {d.data: d for d in dias
+                if d.data.year == ano and d.data.month == mes}
+    primeiro = date(ano, mes, 1)
+    ultimo = (date(ano, 12, 31) if mes == 12
+              else date(ano, mes + 1, 1) - timedelta(days=1))
+    partes = ['<div class="ponto-grade">']
+    partes.extend(f'<div class="ponto-cabecalho">{nome}</div>'
+                  for nome in DIAS_SEMANA)
+    for _ in range(primeiro.weekday()):
+        partes.append('<div class="ponto-celula fora"></div>')
+    cursor = primeiro
+    while cursor <= ultimo:
+        dia = por_data.get(cursor)
+        if dia is None:
+            partes.append(
+                f'<div class="ponto-celula vazia">'
+                f'<span class="ponto-num">{cursor.day}</span></div>')
+        else:
+            fundo, cor, borda = _cores_celula(dia)
+            especial = dia.tipo in ponto_core.TIPOS_ESPECIAIS
+            entrada_txt = ("—" if especial
+                           else ponto_core.minutos_para_hhmm(dia.entrada))
+            saida_txt = ("—" if especial
+                         else ponto_core.minutos_para_hhmm(dia.saida))
+            horas_txt = ("—" if dia.situacao not in
+                         ("positivo", "trabalhado", "negativo", "extra")
+                         else ponto_core.formatar_horas(dia.trabalhados))
+            saldo_txt = (ponto_core.formatar_horas(dia.saldo)
+                         if dia.computado else "—")
+            dica = (f"{formatar_data_br(dia.data.isoformat())} · "
+                    f"Entrada {entrada_txt} · Saída {saida_txt} · "
+                    f"Horas {horas_txt} · Saldo {saldo_txt}")
+            if dia.observacao:
+                dica += f" · {dia.observacao}"
+            partes.append(
+                f'<div class="ponto-celula" '
+                f'style="background:{fundo};color:{cor};border:{borda}" '
+                f'title="{escape(dica)}">'
+                f'<span class="ponto-num">{cursor.day}</span>'
+                f'<span class="ponto-marca">{escape(_marca_celula(dia))}</span>'
+                f'</div>')
+        cursor += timedelta(days=1)
+    partes.append("</div>")
+    return "".join(partes)
+
+
+def _legenda_calendario():
+    itens = [("Trabalhado", "#DBEAFE"), ("Positivo", "#DCFCE7"),
+             ("Negativo", "#FEE2E2"), ("Pendente", "#FEF3C7"),
+             ("Falta", "#FECACA"), ("Férias", "#E0F2FE"),
+             ("Feriado", "#F1F5F9"), ("Atestado", "#F3E8FF"),
+             ("Fim de semana", "#F8FAFC")]
+    spans = "".join(
+        f'<span><i style="background:{cor};border:1px solid #E2E8F0"></i>'
+        f'{nome}</span>' for nome, cor in itens)
+    return f'<div class="ponto-legenda">{spans}</div>'
+
+
+def _secao_graficos(dias, de, ate, hoje):
+    coluna_linha, coluna_barras = st.columns(2)
+    with coluna_linha:
+        st.markdown("**Evolução do saldo acumulado**")
+        pontos = ponto_core.evolucao_saldo(dias, ate=ate, hoje=hoje)
+        if pontos:
+            figura = go.Figure(go.Scatter(
+                x=[p[0] for p in pontos],
+                y=[p[2] / 60 for p in pontos],
+                customdata=[p[1] / 60 for p in pontos],
+                mode="lines+markers",
+                line={"color": "#1C5A8A", "width": 2},
+                marker={"size": 4, "color": "#1C5A8A"},
+                hovertemplate=("%{x|%d/%m/%Y}<br>Saldo do dia: "
+                               "%{customdata:.2f} h<br>Acumulado: "
+                               "%{y:.2f} h<extra></extra>")))
+            figura.update_layout(
+                height=300, margin=dict(l=8, r=8, t=8, b=8),
+                yaxis_title="horas",
+                plot_bgcolor="#FFFFFF", paper_bgcolor="#FFFFFF",
+                font={"family": "Segoe UI", "color": "#0F172A"})
+            figura.add_hline(y=0, line_color="#E2E8F0", line_width=1)
+            st.plotly_chart(figura, key="ponto_grafico_evolucao",
+                            width="stretch")
+        else:
+            st.caption("Sem dias computados no período.")
+    with coluna_barras:
+        st.markdown("**Saldo por mês**")
+        meses = ponto_core.saldo_por_mes(dias, hoje=hoje)
+        if meses:
+            cores = ["#15803D" if saldo > 0 else "#DC2626"
+                     if saldo < 0 else "#64748B" for _, saldo in meses]
+            figura = go.Figure(go.Bar(
+                x=[_mes_rotulo(mes) for mes, _ in meses],
+                y=[saldo / 60 for _, saldo in meses],
+                customdata=[ponto_core.formatar_horas(saldo)
+                            for _, saldo in meses],
+                marker_color=cores,
+                hovertemplate="%{x}<br>Saldo: %{customdata}<extra></extra>"))
+            figura.update_layout(
+                height=300, margin=dict(l=8, r=8, t=8, b=8),
+                yaxis_title="horas",
+                plot_bgcolor="#FFFFFF", paper_bgcolor="#FFFFFF",
+                font={"family": "Segoe UI", "color": "#0F172A"})
+            figura.add_hline(y=0, line_color="#E2E8F0", line_width=1)
+            st.plotly_chart(figura, key="ponto_grafico_meses",
+                            width="stretch")
+        else:
+            st.caption("Sem meses para exibir.")
+
+
 def _salvar_manual(dia, tipo, entrada, saida, observacao, login):
     if tipo != "trabalho":
         entrada = saida = None  # férias/feriado/atestado não guardam horário
@@ -210,6 +371,11 @@ if registros:
     _kpi(c3, "Atrasos", ponto_core.formatar_horas(totais["atraso"]), "informativo")
     _kpi(c4, "Faltas", str(totais["faltas"]), "dias no período")
     _kpi(c5, "Pendências", str(totais["pendencias"]), "batidas incompletas")
+    _secao_graficos(dias, de, ate, hoje)
+    ano_calendario, mes_calendario_num = map(int, mes_calendario.split("-"))
+    st.markdown(CALENDARIO_CSS, unsafe_allow_html=True)
+    st.markdown(_calendario_html(dias, ano_calendario, mes_calendario_num)
+                + _legenda_calendario(), unsafe_allow_html=True)
 else:
     st.info("Nenhum ponto registrado ainda. Use o formulário abaixo para "
             "lançar o primeiro dia.")
