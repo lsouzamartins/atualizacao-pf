@@ -526,18 +526,41 @@ def ler_planilha(conteudo, nome_arquivo=""):
     else:
         raise PontoError("Formato não reconhecido. Envie um arquivo .xlsx ou .xls.")
 
-    registros = []
-    avisos = []
-    vistos = set()
+    resultados = []
     for nome, linhas in abas:
-        registros_aba, avisos_aba = _processar_aba(nome, linhas, vistos)
-        registros.extend(registros_aba)
-        avisos.extend(avisos_aba)
+        registros_aba, avisos_aba = _processar_aba(nome, linhas, set())
+        resultados.append((nome, registros_aba, avisos_aba))
 
-    if not registros:
+    if not any(registros_aba for _, registros_aba, _ in resultados):
         raise PontoError(
             "Nenhuma aba com o formato esperado foi encontrada. A planilha "
             "precisa das colunas Data, Entrada, Saída e Status.")
+
+    ano_recente = max(r["data"].year
+                      for _, registros_aba, _ in resultados
+                      for r in registros_aba)
+
+    registros = []
+    avisos = []
+    for nome, registros_aba, avisos_aba in resultados:
+        if not registros_aba:
+            avisos.extend(avisos_aba)
+            continue
+        if max(r["data"].year for r in registros_aba) < ano_recente:
+            avisos.append(
+                f"Aba '{nome}' ignorada: vale a aba do ano mais recente "
+                f"({ano_recente}).")
+            continue
+        registros.extend(registros_aba)
+        avisos.extend(avisos_aba)
+
+    vistos = set()
+    for registro in registros:
+        if registro["data"] in vistos:
+            raise PontoError(
+                f"A data {registro['data']:%d/%m/%Y} aparece mais de uma vez "
+                "na planilha.")
+        vistos.add(registro["data"])
 
     incompletas = sum(1 for r in registros
                       if bool(r["entrada"]) != bool(r["saida"]))

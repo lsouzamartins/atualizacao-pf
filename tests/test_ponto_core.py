@@ -314,6 +314,76 @@ def test_aba_vazia_e_ignorada_com_aviso():
     assert any("Aba '2025' ignorada" in aviso for aviso in leitura.avisos)
 
 
+def test_so_a_aba_do_ano_mais_recente_entra():
+    conteudo = _xlsx_abas([
+        ("2025", [["Data", "Entrada", "Saída", "Status"],
+                  [date(2025, 3, 10), time(8, 0), time(18, 0), ""],
+                  [date(2025, 3, 11), time(8, 0), time(18, 0), ""]]),
+        ("2026", [["Data", "Entrada", "Saída", "Status"],
+                  [date(2026, 11, 3), time(8, 0), time(18, 0), ""],
+                  [date(2026, 11, 4), time(8, 0), time(18, 0), ""]]),
+    ])
+    leitura = ponto_core.ler_planilha(conteudo)
+    assert leitura.linhas == 2
+    assert leitura.periodo_de == date(2026, 11, 3)
+    assert leitura.periodo_ate == date(2026, 11, 4)
+    assert [r["data"] for r in leitura.registros] == \
+        [date(2026, 11, 3), date(2026, 11, 4)]
+    assert any("Aba '2025' ignorada: vale a aba do ano mais recente (2026)."
+               in aviso for aviso in leitura.avisos)
+
+
+def test_abas_do_mesmo_ano_sao_somadas():
+    conteudo = _xlsx_abas([
+        ("2026-A", [["Data", "Entrada", "Saída", "Status"],
+                    [date(2026, 11, 3), time(8, 0), time(18, 0), ""]]),
+        ("2026-B", [["Data", "Entrada", "Saída", "Status"],
+                    [date(2026, 11, 4), time(8, 0), time(18, 0), ""]]),
+    ])
+    leitura = ponto_core.ler_planilha(conteudo)
+    assert leitura.linhas == 2
+    assert [r["data"] for r in leitura.registros] == \
+        [date(2026, 11, 3), date(2026, 11, 4)]
+    assert not any("ano mais recente" in aviso for aviso in leitura.avisos)
+
+
+def test_aba_unica_de_2025_entra_normalmente():
+    conteudo = _xlsx_abas([
+        ("2025", [["Data", "Entrada", "Saída", "Status"],
+                  [date(2025, 3, 10), time(8, 0), time(18, 0), ""]]),
+    ])
+    leitura = ponto_core.ler_planilha(conteudo)
+    assert leitura.linhas == 1
+    assert leitura.periodo_de == date(2025, 3, 10)
+    assert leitura.periodo_ate == date(2025, 3, 10)
+    assert not any("ano mais recente" in aviso for aviso in leitura.avisos)
+
+
+def test_aba_antiga_vazia_mantem_aviso_sem_dados():
+    conteudo = _xlsx_abas([
+        ("2025", [["DIA", "ENTRADA", "SAIDA", "Status"]]),
+        ("2026", [["Data", "Entrada", "Saída", "Status"],
+                  [date(2026, 11, 3), time(8, 0), time(18, 0), ""]]),
+    ])
+    leitura = ponto_core.ler_planilha(conteudo)
+    assert leitura.linhas == 1
+    assert leitura.periodo_de == date(2026, 11, 3)
+    assert any("Aba '2025' ignorada: sem dados." in aviso
+               for aviso in leitura.avisos)
+    assert not any("ano mais recente" in aviso for aviso in leitura.avisos)
+
+
+def test_data_duplicada_entre_abas_do_mesmo_ano_recusa():
+    conteudo = _xlsx_abas([
+        ("2026-A", [["Data", "Entrada", "Saída", "Status"],
+                    [date(2026, 11, 3), time(8, 0), time(18, 0), ""]]),
+        ("2026-B", [["Data", "Entrada", "Saída", "Status"],
+                    [date(2026, 11, 3), time(8, 0), time(18, 0), ""]]),
+    ])
+    with pytest.raises(ponto_core.PontoError, match="aparece mais de uma vez"):
+        ponto_core.ler_planilha(conteudo)
+
+
 def test_nenhuma_aba_valida_gera_erro():
     conteudo = _xlsx_abas([("Planilha1", [["foo", "bar"], [1, 2]])])
     with pytest.raises(ponto_core.PontoError, match="formato esperado"):
