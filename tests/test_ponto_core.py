@@ -1,5 +1,9 @@
 """Testes das regras de cálculo do ponto (sem Streamlit)."""
+import io
 from datetime import date, datetime, time
+
+import pytest
+from openpyxl import Workbook
 
 import ponto_core
 
@@ -212,3 +216,136 @@ def test_rotulos():
     assert ponto_core.rotulo_situacao("positivo") == "Positivo"
     assert ponto_core.rotulo_situacao("fim_de_semana") == "Fim de semana"
     assert ponto_core.rotulo_tipo("ferias") == "Férias"
+
+
+def _xlsx(linhas, titulo="2026"):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = titulo
+    for linha in linhas:
+        ws.append(linha)
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
+def _xlsx_abas(abas):
+    wb = Workbook()
+    wb.remove(wb.active)
+    for titulo, linhas in abas:
+        ws = wb.create_sheet(titulo)
+        for linha in linhas:
+            ws.append(linha)
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
+def test_ler_planilha_basica():
+    conteudo = _xlsx([
+        ["Data", "Dia", "Entrada", "Saída", "Jornada", "Status"],
+        [date(2026, 11, 3), "ter", time(8, 0), time(18, 0), time(10, 0), ""],
+        [date(2026, 11, 4), "qua", "Férias", "", "", ""],
+        [date(2026, 11, 5), "qui", "08:00", "", "", ""],
+    ])
+    leitura = ponto_core.ler_planilha(conteudo, "ponto.xlsx")
+    assert leitura.linhas == 3
+    assert leitura.periodo_de == date(2026, 11, 3)
+    assert leitura.periodo_ate == date(2026, 11, 5)
+    assert leitura.registros[0]["entrada"] == "08:00"
+    assert leitura.registros[0]["saida"] == "18:00"
+    assert leitura.registros[1]["tipo"] == "ferias"
+    assert leitura.registros[1]["entrada"] is None
+    assert leitura.registros[2]["saida"] is None
+    assert any("incompleta" in aviso for aviso in leitura.avisos)
+
+
+def test_ler_especiais_e_texto_desconhecido():
+    conteudo = _xlsx([
+        ["Data", "Entrada", "Saída", "Status"],
+        [date(2026, 11, 3), "Férias", "", ""],
+        [date(2026, 11, 4), "Feriado", "", ""],
+        [date(2026, 11, 5), "atestado", "", ""],
+        [date(2026, 11, 6), "Plantão", "", ""],
+    ])
+    leitura = ponto_core.ler_planilha(conteudo)
+    assert [r["tipo"] for r in leitura.registros] == \
+        ["ferias", "feriado", "atestado", "outro"]
+    assert any("texto não reconhecido" in aviso.lower() for aviso in leitura.avisos)
+
+
+def test_cabecalho_antigo_dia_funciona():
+    conteudo = _xlsx([
+        ["DIA", "ENTRADA", "SAIDA", "Status"],
+        [date(2026, 11, 3), time(8, 0), time(18, 0), ""],
+    ])
+    leitura = ponto_core.ler_planilha(conteudo)
+    assert leitura.registros[0]["data"] == date(2026, 11, 3)
+
+
+def test_prefere_coluna_data_quando_existe_dia():
+    conteudo = _xlsx([
+        ["Data", "Dia", "Entrada", "Saída"],
+        [date(2026, 11, 3), "ter", time(8, 0), time(18, 0)],
+    ])
+    leitura = ponto_core.ler_planilha(conteudo)
+    assert leitura.registros[0]["data"] == date(2026, 11, 3)
+
+
+def test_linha_sem_data_gera_aviso():
+    conteudo = _xlsx([
+        ["Data", "Entrada", "Saída"],
+        ["", time(8, 0), time(18, 0)],
+        [date(2026, 11, 3), time(8, 0), time(18, 0)],
+    ])
+    leitura = ponto_core.ler_planilha(conteudo)
+    assert leitura.linhas == 1
+    assert any("sem data" in aviso for aviso in leitura.avisos)
+
+
+def test_aba_vazia_e_ignorada_com_aviso():
+    conteudo = _xlsx_abas([
+        ("2025", [["DIA", "ENTRADA", "SAIDA", "Status"]]),
+        ("2026", [["Data", "Entrada", "Saída", "Status"],
+                  [date(2026, 11, 3), time(8, 0), time(18, 0), ""]]),
+    ])
+    leitura = ponto_core.ler_planilha(conteudo)
+    assert len(leitura.registros) == 1
+    assert any("Aba '2025' ignorada" in aviso for aviso in leitura.avisos)
+
+
+def test_nenhuma_aba_valida_gera_erro():
+    conteudo = _xlsx_abas([("Planilha1", [["foo", "bar"], [1, 2]])])
+    with pytest.raises(ponto_core.PontoError, match="formato esperado"):
+        ponto_core.ler_planilha(conteudo)
+
+
+def test_data_duplicada_recusa_importacao():
+    conteudo = _xlsx([
+        ["Data", "Entrada", "Saída"],
+        [date(2026, 11, 3), time(8, 0), time(18, 0)],
+        [date(2026, 11, 3), time(8, 0), time(18, 0)],
+    ])
+    with pytest.raises(ponto_core.PontoError, match="aparece mais de uma vez"):
+        ponto_core.ler_planilha(conteudo)
+
+
+def test_arquivo_protegido_orienta_salvar_copia():
+    conteudo = (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 512
+                + "EncryptedPackage".encode("utf-16le"))
+    with pytest.raises(ponto_core.PontoError, match="protegido por senha"):
+        ponto_core.ler_planilha(conteudo)
+
+
+def test_formato_invalido_gera_erro():
+    with pytest.raises(ponto_core.PontoError, match="Formato não reconhecido"):
+        ponto_core.ler_planilha(b"texto qualquer")
+
+
+def test_jornada_divergente_gera_aviso():
+    conteudo = _xlsx([
+        ["Data", "Entrada", "Saída", "Jornada"],
+        [date(2026, 11, 3), time(8, 0), time(18, 0), time(9, 0)],
+    ])
+    leitura = ponto_core.ler_planilha(conteudo)
+    assert any("jornada" in aviso.lower() for aviso in leitura.avisos)

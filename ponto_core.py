@@ -6,10 +6,14 @@ Módulo sem Streamlit: funções puras, testáveis isoladamente.
 """
 from __future__ import annotations
 
+import io
 import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
+
+import openpyxl
+import xlrd
 
 JORNADA_SEG_QUI = 600
 JORNADA_SEXTA = 540
@@ -299,3 +303,249 @@ def rotulo_situacao(situacao):
 
 def rotulo_tipo(tipo):
     return ROTULOS_TIPO.get(tipo, tipo)
+
+
+@dataclass
+class LeituraPlanilha:
+    registros: list
+    avisos: list
+    periodo_de: date
+    periodo_ate: date
+    linhas: int
+
+
+def _celula(linha, indice):
+    if indice is None or indice >= len(linha):
+        return None
+    return linha[indice]
+
+
+def _mapear_colunas(cabecalho):
+    """Índices das colunas; prefere 'Data' a 'Dia' (o 'Dia' da planilha é o
+    nome do dia da semana, mas no formato antigo DIA é a própria data)."""
+    colunas = {"data": None, "entrada": None, "saida": None,
+               "status": None, "jornada": None}
+    for indice, nome in enumerate(cabecalho):
+        if nome == "data":
+            colunas["data"] = indice
+            break
+    if colunas["data"] is None:
+        for indice, nome in enumerate(cabecalho):
+            if nome == "dia":
+                colunas["data"] = indice
+                break
+    for indice, nome in enumerate(cabecalho):
+        if nome == "entrada":
+            colunas["entrada"] = indice
+        elif nome in ("saida",):
+            colunas["saida"] = indice
+        elif nome == "status":
+            colunas["status"] = indice
+        elif nome == "jornada":
+            colunas["jornada"] = indice
+    return colunas
+
+
+def _data_de(valor):
+    if isinstance(valor, datetime):
+        return valor.date()
+    if isinstance(valor, date):
+        return valor
+    if isinstance(valor, str):
+        texto = valor.strip()
+        for formato in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(texto, formato).date()
+            except ValueError:
+                continue
+    return None
+
+
+def _texto(valor):
+    if valor is None:
+        return None
+    if isinstance(valor, float) and valor.is_integer():
+        return str(int(valor))
+    return str(valor).strip() or None
+
+
+def _interpretar_batidas(aba, numero, bruto_entrada, bruto_saida,
+                         status, avisos):
+    """Devolve (tipo, entrada_min, saida_min, observacao).
+
+    Texto especial em Entrada/Saída define o tipo e descarta horários.
+    Texto desconhecido vira 'outro' (pendência) e gera aviso.
+    """
+    especial = None
+    texto_desconhecido = False
+    for bruto in (bruto_entrada, bruto_saida):
+        if isinstance(bruto, str) and bruto.strip():
+            achado = tipo_especial(bruto)
+            if achado:
+                especial = achado
+            elif minutos_de(bruto) is None:
+                texto_desconhecido = True
+
+    if especial:
+        if minutos_de(bruto_entrada) is not None or minutos_de(bruto_saida) is not None:
+            avisos.append(
+                f"Aba '{aba}', linha {numero}: horário ignorado — o dia está "
+                f"marcado como {ROTULOS_TIPO[especial]}.")
+        return especial, None, None, status
+    if texto_desconhecido:
+        avisos.append(
+            f"Aba '{aba}', linha {numero}: texto não reconhecido em "
+            "Entrada/Saída; conta como pendência.")
+        return "outro", None, None, status
+
+    entrada = minutos_de(bruto_entrada)
+    saida = minutos_de(bruto_saida)
+    if (entrada is None and saida is None and status
+            and tipo_especial(status)):
+        return tipo_especial(status), None, None, status
+    return "trabalho", entrada, saida, status
+
+
+def _aba_tem_dados(linhas, colunas):
+    for linha in linhas[1:]:
+        for chave in ("entrada", "saida", "status"):
+            if _celula(linha, colunas[chave]) not in (None, ""):
+                return True
+    return False
+
+
+def _processar_aba(aba, linhas, vistos):
+    if not linhas:
+        return [], [f"Aba '{aba}' ignorada: sem dados."]
+    cabecalho = [normalizar_texto(c) for c in linhas[0]]
+    colunas = _mapear_colunas(cabecalho)
+    if (colunas["data"] is None
+            or (colunas["entrada"] is None and colunas["saida"] is None
+                and colunas["status"] is None)):
+        return [], [f"Aba '{aba}' ignorada: cabeçalho não reconhecido "
+                    "(esperado Data, Entrada, Saída e Status)."]
+    if not _aba_tem_dados(linhas, colunas):
+        return [], [f"Aba '{aba}' ignorada: sem dados."]
+
+    registros = []
+    avisos = []
+    for numero, linha in enumerate(linhas[1:], start=2):
+        bruto_data = _celula(linha, colunas["data"])
+        if bruto_data in (None, ""):
+            if any(_celula(linha, colunas[chave]) not in (None, "")
+                   for chave in ("entrada", "saida", "status")):
+                avisos.append(f"Aba '{aba}', linha {numero}: linha sem data "
+                              "ignorada.")
+            continue
+        dia = _data_de(bruto_data)
+        if dia is None:
+            avisos.append(f"Aba '{aba}', linha {numero}: data "
+                          f"'{bruto_data}' não reconhecida; linha ignorada.")
+            continue
+        if dia in vistos:
+            raise PontoError(
+                f"A data {dia:%d/%m/%Y} aparece mais de uma vez na planilha.")
+        vistos.add(dia)
+
+        status = _texto(_celula(linha, colunas["status"]))
+        tipo, entrada, saida, observacao = _interpretar_batidas(
+            aba, numero, _celula(linha, colunas["entrada"]),
+            _celula(linha, colunas["saida"]), status, avisos)
+
+        if (colunas["jornada"] is not None and tipo == "trabalho"
+                and entrada is not None and saida is not None and saida > entrada
+                and dia.weekday() < 5):
+            jornada_planilha = minutos_de(_celula(linha, colunas["jornada"]))
+            jornada_regra = jornada_do_dia(dia)
+            if (jornada_planilha is not None
+                    and jornada_planilha != jornada_regra):
+                avisos.append(
+                    f"Aba '{aba}', linha {numero}: jornada de "
+                    f"{minutos_para_hhmm(jornada_planilha)} difere da regra "
+                    f"({minutos_para_hhmm(jornada_regra)}); vale a regra do "
+                    "sistema.")
+
+        registros.append({
+            "data": dia,
+            "entrada": minutos_para_hhmm(entrada) if entrada is not None else None,
+            "saida": minutos_para_hhmm(saida) if saida is not None else None,
+            "tipo": tipo,
+            "observacao": observacao,
+        })
+    return registros, avisos
+
+
+def _linhas_xls(aba, datemode):
+    linhas = []
+    for numero in range(aba.nrows):
+        linha = []
+        for coluna in range(aba.ncols):
+            celula = aba.cell(numero, coluna)
+            valor = celula.value
+            if celula.ctype == xlrd.XL_CELL_DATE:
+                valor = xlrd.xldate_as_datetime(valor, datemode)
+            linha.append(valor)
+        linhas.append(linha)
+    return linhas
+
+
+def ler_planilha(conteudo, nome_arquivo=""):
+    """Lê .xlsx/.xls e devolve LeituraPlanilha; nada é gravado.
+
+    Rejeita arquivo protegido, formato inválido, data duplicada e planilha
+    sem nenhuma aba no formato esperado.
+    """
+    if not conteudo:
+        raise PontoError("O arquivo está vazio.")
+    if len(conteudo) > TAMANHO_MAXIMO:
+        raise PontoError("O arquivo tem mais de 5 MB. Envie uma planilha menor.")
+
+    if conteudo.startswith(ASSINATURA_OLE2):
+        if "EncryptedPackage".encode("utf-16le") in conteudo:
+            raise PontoError(
+                "Este arquivo está protegido por senha. Abra no Excel, salve "
+                "uma cópia sem senha e envie a cópia.")
+        try:
+            livro = xlrd.open_workbook(file_contents=conteudo)
+        except Exception as erro:
+            raise PontoError(f"Não foi possível abrir o arquivo .xls: {erro}") from erro
+        abas = [(aba.name, _linhas_xls(aba, livro.datemode))
+                for aba in livro.sheets()]
+    elif conteudo[:2] == b"PK":
+        try:
+            livro = openpyxl.load_workbook(io.BytesIO(conteudo),
+                                           data_only=True, read_only=True)
+        except Exception as erro:
+            raise PontoError(f"Não foi possível abrir o arquivo .xlsx: {erro}") from erro
+        try:
+            abas = [(aba.title,
+                     [list(linha) for linha in aba.iter_rows(values_only=True)])
+                    for aba in livro.worksheets]
+        finally:
+            livro.close()
+    else:
+        raise PontoError("Formato não reconhecido. Envie um arquivo .xlsx ou .xls.")
+
+    registros = []
+    avisos = []
+    vistos = set()
+    for nome, linhas in abas:
+        registros_aba, avisos_aba = _processar_aba(nome, linhas, vistos)
+        registros.extend(registros_aba)
+        avisos.extend(avisos_aba)
+
+    if not registros:
+        raise PontoError(
+            "Nenhuma aba com o formato esperado foi encontrada. A planilha "
+            "precisa das colunas Data, Entrada, Saída e Status.")
+
+    incompletas = sum(1 for r in registros
+                      if bool(r["entrada"]) != bool(r["saida"]))
+    if incompletas:
+        avisos.append(f"{incompletas} batida(s) incompleta(s) encontrada(s).")
+
+    registros.sort(key=lambda r: r["data"])
+    return LeituraPlanilha(
+        registros=registros, avisos=avisos,
+        periodo_de=registros[0]["data"], periodo_ate=registros[-1]["data"],
+        linhas=len(registros))
