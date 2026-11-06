@@ -41,6 +41,7 @@ def _usuario_sessao(usuario) -> dict:
     12/10/2026: passou a carregar acesso_glosa — sem ele, o card de Recursos
     de Glosa do portal nunca aparecia para quem não é admin (o portal lê
     usuario.get("acesso_glosa"), que vinha sempre None).
+    06/11/2026: passou a carregar acesso_ponto (página Controle de Ponto).
     """
     return {"login": usuario["login"],
             "admin": bool(usuario["admin"]),

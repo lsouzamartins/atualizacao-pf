@@ -2,12 +2,24 @@
 import navegacao
 
 
-def test_sem_acesso_e_admin_nav_fica_como_hoje():
+def test_admin_sem_flags_ve_o_portal_e_o_ponto():
+    """06/11: admin sempre tem acesso — o spec manda Início (portal) + Ponto
+    no nav mesmo com as permissões próprias zeradas (o banco cria admin sem
+    marcar as colunas de acesso, e a Administração não as salva para ele)."""
     paginas = navegacao.montar_paginas(False, admin=True)
     assert [p["titulo"] for p in paginas] == \
-        ["Processamento", "Resumo do dia", "Histórico", "Administração"]
+        ["Início", "Ponto", "PF · Processamento", "PF · Resumo do dia",
+         "PF · Histórico", "PF · Administração"]
     assert paginas[0]["default"] is True
-    assert all(not p["titulo"].startswith(("PF ·", "CR ·")) for p in paginas)
+    assert all(not p["default"] for p in paginas[1:])
+
+
+def test_admin_com_glosa_tambem_tem_a_pagina_ponto():
+    """Cenário do card do portal: admin com outra permissão e acesso_ponto
+    zerado — o card aparece, então a página precisa existir no nav (senão o
+    Abrir Controle de Ponto quebra com 'Could not find page')."""
+    paginas = navegacao.montar_paginas(False, acesso_glosa=True, admin=True)
+    assert "Ponto" in [p["titulo"] for p in paginas]
 
 
 def test_nao_admin_nao_ve_a_aba_administracao():
@@ -25,7 +37,7 @@ def test_com_acesso_cr_portal_e_default_sem_paginas_cr():
     assert titulos[0] == "Início" and paginas[0]["default"] is True
     assert "PF · Processamento" in titulos
     assert not any(t.startswith("CR ·") for t in titulos)
-    assert len(paginas) == 5
+    assert len(paginas) == 6  # admin também ganha a página Ponto (06/11)
     assert all(not p["default"] for p in paginas[1:])
 
 

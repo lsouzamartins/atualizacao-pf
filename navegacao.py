@@ -2,8 +2,9 @@
 ==============================================================================
 NAVEGAÇÃO — PORTAL E PÁGINAS
 Monta a lista de páginas do st.navigation. O portal (Início) entra quando o
-usuário tem QUALQUER acesso próprio (Contas a Receber/Cobrança ou Recursos
-de Glosa) e vira a página padrão; as páginas do PF ganham o prefixo 'PF ·'.
+usuário tem QUALQUER acesso próprio (Contas a Receber/Cobrança, Recursos
+de Glosa ou Controle de Ponto) ou é admin — admin sempre tem acesso a tudo
+(06/11) — e vira a página padrão; as páginas do PF ganham o prefixo 'PF ·'.
 A aba Administração só existe para admin (12/10).
 ==============================================================================
 """
@@ -13,9 +14,11 @@ def montar_paginas(acesso_cr, acesso_glosa=False, admin=False, acesso_ponto=Fals
     """Lista de páginas [{path, titulo, icone, default}] para o st.navigation.
 
     06/11/2026: o parâmetro acesso_ponto inclui a página Ponto no nav; quem
-    tem só essa permissão também vê o Início (portal).
+    tem só essa permissão também vê o Início (portal). Admin sempre vê o
+    Início e o Ponto (o card do portal já aparecia para admin; sem a página
+    no nav, o "Abrir Controle de Ponto" quebrava com Could not find page).
     """
-    tem_portal = acesso_cr or acesso_glosa or acesso_ponto
+    tem_portal = acesso_cr or acesso_glosa or acesso_ponto or admin
     base_pf = [
         {"path": "app_pages/processamento.py", "titulo": "Processamento",
          "icone": ":material/play_circle:", "default": not tem_portal},
@@ -34,7 +37,7 @@ def montar_paginas(acesso_cr, acesso_glosa=False, admin=False, acesso_ponto=Fals
     portal = {"path": "app_pages/portal.py", "titulo": "Início",
               "icone": ":material/home:", "default": True}
     paginas = [portal]
-    if acesso_ponto:
+    if acesso_ponto or admin:
         paginas.append({"path": "app_pages/ponto.py", "titulo": "Ponto",
                         "icone": ":material/access_time:", "default": False})
     return paginas + pf
