@@ -1,4 +1,5 @@
 """PÁGINA: PONTO — banco de horas pessoal (dashboard e lançamento manual)."""
+from collections import Counter
 from datetime import date, time, timedelta
 from html import escape
 
@@ -323,6 +324,55 @@ def _excluir(dia):
     st.rerun()
 
 
+def _previa_importacao(leitura, registros, nome_arquivo):
+    manuais = {r["data"] for r in registros if r["origem"] == "manual"}
+    preservados = sum(1 for r in leitura.registros if r["data"] in manuais)
+    pendentes = sum(1 for r in leitura.registros
+                    if bool(r["entrada"]) != bool(r["saida"]))
+    st.markdown(f"**Prévia de {escape(nome_arquivo)}**")
+    st.write(
+        f"Período: {formatar_data_br(leitura.periodo_de.isoformat())} a "
+        f"{formatar_data_br(leitura.periodo_ate.isoformat())} · "
+        f"{leitura.linhas} linha(s) · {pendentes} pendência(s)")
+    contagem = Counter(r["tipo"] for r in leitura.registros)
+    st.caption(" · ".join(f"{ponto_core.rotulo_tipo(tipo)}: {quantidade}"
+                          for tipo, quantidade in sorted(contagem.items())))
+    sobrescrever = st.checkbox(
+        "Sobrescrever também os dias editados manualmente",
+        key="ponto_sobrescrever")
+    if preservados:
+        if sobrescrever:
+            st.warning(f"{preservados} dia(s) com lançamento manual serão "
+                       "sobrescritos pelo conteúdo da planilha.")
+        else:
+            st.info(f"{preservados} dia(s) com lançamento manual serão "
+                    "preservados.")
+    if leitura.avisos:
+        st.warning("\n".join(f"- {aviso}" for aviso in leitura.avisos))
+    coluna_confirmar, coluna_cancelar = st.columns(2)
+    if coluna_confirmar.button("Confirmar importação", type="primary",
+                               key="ponto_confirmar_importacao"):
+        conn = _conexao()
+        try:
+            banco.inicializar_banco(conn)
+            banco.salvar_importacao_ponto(
+                conn, st.session_state["usuario"]["login"], nome_arquivo,
+                leitura.registros, leitura.periodo_de, leitura.periodo_ate,
+                leitura.avisos, sobrescrever_manuais=sobrescrever)
+        finally:
+            conn.close()
+        st.session_state["ponto_upload_nonce"] = st.session_state.get(
+            "ponto_upload_nonce", 0) + 1
+        st.session_state.pop("ponto_sobrescrever", None)
+        _flash("Planilha importada.")
+        st.rerun()
+    if coluna_cancelar.button("Cancelar", key="ponto_cancelar_importacao"):
+        st.session_state["ponto_upload_nonce"] = st.session_state.get(
+            "ponto_upload_nonce", 0) + 1
+        st.session_state.pop("ponto_sobrescrever", None)
+        st.rerun()
+
+
 usuario = st.session_state.get("usuario", {})
 if not (usuario.get("admin") or usuario.get("acesso_ponto")):
     st.error("Acesso restrito ao Controle de Ponto.")
@@ -377,8 +427,9 @@ if registros:
     st.markdown(_calendario_html(dias, ano_calendario, mes_calendario_num)
                 + _legenda_calendario(), unsafe_allow_html=True)
 else:
-    st.info("Nenhum ponto registrado ainda. Use o formulário abaixo para "
-            "lançar o primeiro dia.")
+    st.info("Nenhum ponto registrado ainda. Lance o primeiro dia no "
+            "formulário abaixo ou importe a planilha em "
+            "**Importar nova planilha**.")
 
 with st.expander("Lançar/editar ponto", expanded=not registros):
     mapa = {r["data"]: r for r in registros}
@@ -438,5 +489,32 @@ if registros:
                            file_name=f"ponto-{chave_csv}.csv", mime="text/csv")
     else:
         st.info("Sem dias no período selecionado. Troque o mês no seletor.")
+
+with st.expander("Importar nova planilha", expanded=not registros):
+    st.caption("Envie o Controle de Ponto em .xlsx ou .xls (até 5 MB). "
+               "O site não guarda a senha do arquivo: se ele estiver "
+               "protegido, salve uma cópia sem senha no Excel e envie a cópia.")
+    nonce = st.session_state.get("ponto_upload_nonce", 0)
+    upload = st.file_uploader("Planilha de ponto", type=["xlsx", "xls"],
+                              key=f"ponto_upload_{nonce}")
+    if upload is not None:
+        try:
+            leitura = ponto_core.ler_planilha(upload.getvalue(), upload.name)
+        except ponto_core.PontoError as erro:
+            st.error(str(erro))
+        else:
+            _previa_importacao(leitura, registros, upload.name)
+    if uploads:
+        st.markdown("**Envios recentes**")
+        st.dataframe(pd.DataFrame([{
+            "Enviado em": formatar_data_hora_br(u["enviado_em"]),
+            "Usuário": u["usuario"],
+            "Arquivo": u["nome_arquivo"],
+            "Período": (f"{formatar_data_br(u['periodo_de'])} a "
+                        f"{formatar_data_br(u['periodo_ate'])}"),
+            "Linhas": u["linhas"],
+        } for u in uploads]), hide_index=True, width="stretch")
+    else:
+        st.caption("Nenhum envio registrado.")
 
 st.markdown(f'<div class="app-footer">{VERSAO}</div>', unsafe_allow_html=True)

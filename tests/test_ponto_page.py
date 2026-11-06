@@ -117,7 +117,34 @@ def test_pagina_com_dados_mostra_calendario(tmp_path, monkeypatch):
     assert any("ponto-grade" in m.value for m in at.markdown)
 
 
+def test_calendario_escapa_observacao(tmp_path, monkeypatch):
+    at = _app(tmp_path, monkeypatch, registros=[
+        {"data": date(2026, 11, 3), "entrada": "08:00", "saida": "18:00",
+         "observacao": '<script>alert("x")</script>'},
+    ])
+    at.run()
+    assert not at.exception
+    html = " ".join(m.value for m in at.markdown if "ponto-grade" in m.value)
+    assert "ponto-grade" in html
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
 def test_fonte_tem_graficos_e_calendario():
     assert "Evolução do saldo acumulado" in FONTE
     assert "Saldo por mês" in FONTE
     assert "_calendario_html" in FONTE
+
+
+def test_pagina_sem_dados_abre_importacao(tmp_path, monkeypatch):
+    at = _app(tmp_path, monkeypatch)
+    at.run()
+    assert not at.exception
+    assert at.file_uploader
+
+
+def test_fonte_tem_importacao():
+    assert "Importar nova planilha" in FONTE
+    assert "Sobrescrever também os dias editados manualmente" in FONTE
+    assert "ponto_core.ler_planilha" in FONTE
+    assert "salvar_importacao_ponto" in FONTE
