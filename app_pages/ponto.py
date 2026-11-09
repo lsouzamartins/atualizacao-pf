@@ -304,7 +304,7 @@ def _secao_graficos(dias, de, ate, hoje):
             st.caption("Sem meses para exibir.")
 
 
-def _salvar_manual(dia, tipo, entrada, saida, observacao, login):
+def _salvar_manual(dia, tipo, entrada, saida, observacao, login, dono):
     if tipo != "trabalho":
         entrada = saida = None  # férias/feriado/atestado não guardam horário
         # Força o bloco de sync no rerun: ele recarrega do banco (entrada/
@@ -319,18 +319,18 @@ def _salvar_manual(dia, tipo, entrada, saida, observacao, login):
             conn, dia,
             entrada.strftime("%H:%M") if entrada else None,
             saida.strftime("%H:%M") if saida else None,
-            tipo, (observacao or "").strip() or None, login)
+            tipo, (observacao or "").strip() or None, login, dono=dono)
     finally:
         conn.close()
     _flash(f"Dia {formatar_data_br(dia.isoformat())} salvo.")
     st.rerun()
 
 
-def _excluir(dia):
+def _excluir(dia, dono):
     conn = _conexao()
     try:
         banco.inicializar_banco(conn)
-        banco.excluir_registro_ponto(conn, dia)
+        banco.excluir_registro_ponto(conn, dono, dia)
     finally:
         conn.close()
     for chave in ("ponto_form_data_anterior", "ponto_form_tipo",
@@ -341,7 +341,7 @@ def _excluir(dia):
     st.rerun()
 
 
-def _previa_importacao(leitura, registros, nome_arquivo):
+def _previa_importacao(leitura, registros, nome_arquivo, dono):
     manuais = {r["data"] for r in registros if r["origem"] == "manual"}
     preservados = sum(1 for r in leitura.registros if r["data"] in manuais)
     pendentes = sum(1 for r in leitura.registros
@@ -375,7 +375,7 @@ def _previa_importacao(leitura, registros, nome_arquivo):
             banco.salvar_importacao_ponto(
                 conn, st.session_state["usuario"]["login"], nome_arquivo,
                 leitura.registros, leitura.periodo_de, leitura.periodo_ate,
-                leitura.avisos, sobrescrever_manuais=sobrescrever)
+                leitura.avisos, sobrescrever_manuais=sobrescrever, dono=dono)
         finally:
             conn.close()
         st.session_state["ponto_upload_nonce"] = st.session_state.get(
@@ -390,6 +390,39 @@ def _previa_importacao(leitura, registros, nome_arquivo):
         st.rerun()
 
 
+def _rotulo_pessoa(login, nome=None):
+    return f"{nome} ({login})" if nome and nome != login else login
+
+
+def _dono_do_ponto(usuario):
+    """Login dono do ponto exibido: o próprio, ou o escolhido pelo admin.
+
+    09/11/2026: cada usuário alimenta e vê o próprio ponto; o admin vê todos
+    e escolhe a pessoa no seletor.
+    """
+    proprio = usuario["login"]
+    if not usuario.get("admin"):
+        return proprio
+    conn = _conexao()
+    try:
+        banco.inicializar_banco(conn)
+        pessoas = [r for r in banco.listar_usuarios(conn)
+                   if r["admin"] or r["acesso_ponto"]]
+    finally:
+        conn.close()
+    logins = [r["login"] for r in pessoas]
+    nomes = {r["login"]: r["nome"] for r in pessoas}
+    if proprio not in logins:
+        logins.insert(0, proprio)
+        nomes[proprio] = proprio
+    if st.session_state.get("ponto_pessoa") not in logins:
+        st.session_state.pop("ponto_pessoa", None)
+    indice = logins.index(proprio)
+    return st.selectbox(
+        "Pessoa", logins, index=indice, key="ponto_pessoa",
+        format_func=lambda login: _rotulo_pessoa(login, nomes.get(login)))
+
+
 usuario = st.session_state.get("usuario", {})
 if not (usuario.get("admin") or usuario.get("acesso_ponto")):
     st.error("Acesso restrito ao Controle de Ponto.")
@@ -400,12 +433,25 @@ st.markdown(f"### {icone('clock', 20, '#1C5A8A')} Controle de Ponto",
 st.markdown(BOTOES_CSS, unsafe_allow_html=True)
 _mostrar_flash()
 
+dono = _dono_do_ponto(usuario)
+if st.session_state.get("ponto_dono_anterior") != dono:
+    # Trocar de pessoa não pode herdar data, horários, confirmação de
+    # exclusão nem a planilha carregada na prévia da pessoa anterior.
+    for chave in ("ponto_form_data_anterior", "ponto_form_tipo",
+                  "ponto_form_entrada", "ponto_form_saida", "ponto_form_obs",
+                  "ponto_excluir_confirmar", "ponto_sobrescrever",
+                  "ponto_periodo"):
+        st.session_state.pop(chave, None)
+    st.session_state["ponto_upload_nonce"] = st.session_state.get(
+        "ponto_upload_nonce", 0) + 1
+    st.session_state["ponto_dono_anterior"] = dono
+
 hoje = date.today()
 conn = _conexao()
 try:
     banco.inicializar_banco(conn)
-    registros = banco.registros_ponto(conn)
-    uploads = banco.listar_uploads_ponto(conn, limite=20)
+    registros = banco.registros_ponto(conn, dono)
+    uploads = banco.listar_uploads_ponto(conn, dono, limite=20)
 finally:
     conn.close()
 dias = ponto_core.calcular_dias(registros, hoje=hoje)
@@ -490,13 +536,13 @@ with st.expander("Lançar/editar ponto", expanded=not registros):
             st.error("A saída deve ser maior que a entrada.")
         else:
             _salvar_manual(data_escolhida, tipo, entrada, saida, observacao,
-                           usuario["login"])
+                           usuario["login"], dono)
     confirmar = st.checkbox("Confirmo excluir o dia selecionado",
                             key="ponto_excluir_confirmar",
                             disabled=data_escolhida not in mapa)
     if st.button("Excluir dia",
                  disabled=not confirmar or data_escolhida not in mapa):
-        _excluir(data_escolhida)
+        _excluir(data_escolhida, dono)
 
 if registros:
     linhas = _linhas_tabela(dias, de, ate)
@@ -521,7 +567,7 @@ with st.expander("Importar nova planilha", expanded=not registros):
         except ponto_core.PontoError as erro:
             st.error(str(erro))
         else:
-            _previa_importacao(leitura, registros, upload.name)
+            _previa_importacao(leitura, registros, upload.name, dono)
     if uploads:
         st.markdown("**Envios recentes**")
         st.dataframe(pd.DataFrame([{

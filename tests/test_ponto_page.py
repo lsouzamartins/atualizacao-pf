@@ -9,16 +9,23 @@ RAIZ = Path(__file__).resolve().parents[1]
 FONTE = (RAIZ / "app_pages" / "ponto.py").read_text(encoding="utf-8")
 
 
-def _app(tmp_path, monkeypatch, usuario=None, registros=()):
+def _app(tmp_path, monkeypatch, usuario=None, registros=(), usuarios=()):
     caminho = str(tmp_path / "pf.db")
     monkeypatch.setattr(banco, "CAMINHO_PADRAO", caminho)
     conn = banco.conectar(caminho)
     banco.inicializar_banco(conn)
+    for dados in usuarios:
+        banco.criar_usuario(conn, dados["login"],
+                            dados.get("nome", dados["login"]),
+                            "senha12345", admin=dados.get("admin", False))
+        if dados.get("acesso_ponto"):
+            banco.definir_acesso_ponto(conn, dados["login"], True)
     for registro in registros:
         banco.salvar_registro_manual(
             conn, registro["data"], registro.get("entrada"),
             registro.get("saida"), registro.get("tipo", "trabalho"),
-            registro.get("observacao"), "leo")
+            registro.get("observacao"), "leo",
+            dono=registro.get("dono", "leo"))
     conn.close()
     at = AppTest.from_file(str(RAIZ / "app_pages" / "ponto.py"),
                            default_timeout=30)
@@ -155,3 +162,74 @@ def test_fonte_tem_importacao():
     assert "Sobrescrever também os dias editados manualmente" in FONTE
     assert "ponto_core.ler_planilha" in FONTE
     assert "salvar_importacao_ponto" in FONTE
+
+
+def test_usuario_comum_ve_so_o_proprio_ponto_sem_seletor(tmp_path, monkeypatch):
+    """09/11/2026: cada usuário alimenta e vê o próprio ponto; o seletor de
+    pessoa é exclusivo do admin."""
+    at = _app(tmp_path, monkeypatch,
+              usuario={"login": "ana", "admin": False, "acesso_ponto": True},
+              registros=[
+                  {"data": date(2026, 11, 3), "entrada": "08:00",
+                   "saida": "18:00", "dono": "leo"},
+                  {"data": date(2026, 11, 3), "entrada": "10:00",
+                   "saida": "19:00", "dono": "ana"},
+              ])
+    at.run()
+    assert not at.exception
+    assert not [s for s in at.selectbox if s.key == "ponto_pessoa"]
+    assert at.dataframe[0].value["Entrada"].tolist() == ["10:00"]
+
+
+def test_admin_escolhe_pessoa_e_ve_o_ponto_dela(tmp_path, monkeypatch):
+    at = _app(tmp_path, monkeypatch,
+              usuario={"login": "leo", "admin": True, "acesso_ponto": True},
+              usuarios=[{"login": "leo", "nome": "Leonardo", "admin": True},
+                        {"login": "ana", "nome": "Ana", "acesso_ponto": True}],
+              registros=[
+                  {"data": date(2026, 11, 3), "entrada": "08:00",
+                   "saida": "18:00", "dono": "leo"},
+                  {"data": date(2026, 11, 3), "entrada": "10:00",
+                   "saida": "19:00", "dono": "ana"},
+              ])
+    at.run()
+    assert not at.exception
+    seletor = at.selectbox(key="ponto_pessoa")
+    assert seletor.value == "leo"
+    assert at.dataframe[0].value["Entrada"].tolist() == ["08:00"]
+    seletor.set_value("ana")
+    at.run()
+    assert not at.exception
+    assert at.dataframe[0].value["Entrada"].tolist() == ["10:00"]
+
+
+def test_admin_salva_dia_no_ponto_da_pessoa_escolhida(tmp_path, monkeypatch):
+    at = _app(tmp_path, monkeypatch,
+              usuario={"login": "leo", "admin": True, "acesso_ponto": True},
+              usuarios=[{"login": "leo", "nome": "Leonardo", "admin": True},
+                        {"login": "ana", "nome": "Ana", "acesso_ponto": True}])
+    at.run()
+    at.selectbox(key="ponto_pessoa").set_value("ana")
+    at.run()
+    at.date_input(key="ponto_form_data").set_value(date(2026, 11, 3))
+    at.run()
+    at.time_input(key="ponto_form_entrada").set_value(time(8, 0))
+    at.time_input(key="ponto_form_saida").set_value(time(17, 0))
+    at.run()
+    next(b for b in at.button if b.label == "Salvar").click()
+    at.run()
+    assert not at.exception
+    conn = banco.conectar(str(tmp_path / "pf.db"))
+    try:
+        assert [r["data"] for r in banco.registros_ponto(conn, "ana")] == \
+            [date(2026, 11, 3)]
+        assert banco.registros_ponto(conn, "leo") == []
+    finally:
+        conn.close()
+
+
+def test_fonte_importa_e_edita_no_dono_exibido():
+    assert "banco.registros_ponto(conn, dono)" in FONTE
+    assert "banco.listar_uploads_ponto(conn, dono, limite=20)" in FONTE
+    assert "sobrescrever_manuais=sobrescrever, dono=dono" in FONTE
+    assert "banco.excluir_registro_ponto(conn, dono, dia)" in FONTE

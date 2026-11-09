@@ -64,6 +64,7 @@ CREATE INDEX IF NOT EXISTS idx_sessoes_hash ON sessoes(token_hash);
 CREATE TABLE IF NOT EXISTS ponto_uploads (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   usuario TEXT NOT NULL,
+  dono TEXT,
   nome_arquivo TEXT NOT NULL,
   enviado_em TEXT NOT NULL,
   periodo_de TEXT NOT NULL,
@@ -74,6 +75,7 @@ CREATE TABLE IF NOT EXISTS ponto_uploads (
 CREATE TABLE IF NOT EXISTS ponto_registros (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   upload_id INTEGER REFERENCES ponto_uploads(id),
+  dono TEXT NOT NULL,
   data TEXT NOT NULL,
   entrada TEXT,
   saida TEXT,
@@ -82,7 +84,7 @@ CREATE TABLE IF NOT EXISTS ponto_registros (
   origem TEXT NOT NULL DEFAULT 'upload',
   atualizado_em TEXT,
   atualizado_por TEXT,
-  UNIQUE(data)
+  UNIQUE(dono, data)
 );
 CREATE INDEX IF NOT EXISTS idx_ponto_data ON ponto_registros(data);
 """
@@ -110,11 +112,63 @@ def _garantir_coluna(conn, nome):
                      "INTEGER NOT NULL DEFAULT 0")
 
 
+def _colunas(conn, tabela):
+    return [r["name"] for r in conn.execute(f"PRAGMA table_info({tabela})")]
+
+
+def _migrar_ponto_por_dono(conn):
+    """Separa o ponto por dono (login) em bancos anteriores a 09/11/2026.
+
+    Uploads ganham dono = usuario (quem enviou é o dono do envio). Registros
+    são reconstruídos com UNIQUE(dono, data): cada dia vai para o usuário do
+    upload que o gravou, ou para quem o editou por último, ou para o primeiro
+    admin. Idempotente.
+    """
+    if "dono" not in _colunas(conn, "ponto_uploads"):
+        conn.execute("ALTER TABLE ponto_uploads ADD COLUMN dono TEXT")
+        conn.execute("UPDATE ponto_uploads SET dono = usuario")
+    if "dono" in _colunas(conn, "ponto_registros"):
+        return
+    conn.execute("""CREATE TABLE ponto_registros_nova (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        upload_id INTEGER REFERENCES ponto_uploads(id),
+        dono TEXT NOT NULL,
+        data TEXT NOT NULL,
+        entrada TEXT,
+        saida TEXT,
+        tipo TEXT NOT NULL DEFAULT 'trabalho',
+        observacao TEXT,
+        origem TEXT NOT NULL DEFAULT 'upload',
+        atualizado_em TEXT,
+        atualizado_por TEXT,
+        UNIQUE(dono, data))""")
+    conn.execute("""
+        INSERT INTO ponto_registros_nova
+            (id, upload_id, dono, data, entrada, saida, tipo, observacao,
+             origem, atualizado_em, atualizado_por)
+        SELECT r.id, r.upload_id,
+               COALESCE((SELECT u.usuario FROM ponto_uploads u
+                         WHERE u.id = r.upload_id),
+                        NULLIF(r.atualizado_por, ''),
+                        (SELECT login FROM usuarios WHERE admin = 1
+                         ORDER BY id LIMIT 1),
+                        (SELECT login FROM usuarios ORDER BY id LIMIT 1),
+                        'lsmartins'),
+               r.data, r.entrada, r.saida, r.tipo, r.observacao, r.origem,
+               r.atualizado_em, r.atualizado_por
+        FROM ponto_registros r""")
+    conn.execute("DROP TABLE ponto_registros")
+    conn.execute("ALTER TABLE ponto_registros_nova RENAME TO ponto_registros")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ponto_data "
+                 "ON ponto_registros(data)")
+
+
 def inicializar_banco(conn):
     conn.executescript(SCHEMA)
     for coluna in ("acesso_contas_receber", "acesso_glosa", "acesso_pediu_chegou",
                    "acesso_dacm", "acesso_conciliador", "acesso_ponto"):
         _garantir_coluna(conn, coluna)
+    _migrar_ponto_por_dono(conn)
     conn.commit()
 
 
@@ -463,89 +517,111 @@ def historico(conn, de=None, ate=None, convenio=None):
 # ==============================================================================
 def salvar_importacao_ponto(conn, usuario, nome_arquivo, registros,
                             periodo_de, periodo_ate, avisos,
-                            sobrescrever_manuais=False, agora=None):
+                            sobrescrever_manuais=False, agora=None, dono=None):
     """Grava o upload e os dias em uma transação; devolve o id do upload.
 
-    Preserva os registros com origem 'manual', salvo
+    `usuario` é quem envia; `dono` é o login dono do ponto (padrão: o próprio
+    remetente — o admin pode importar para outra pessoa). Preserva os
+    registros com origem 'manual' do MESMO dono, salvo
     sobrescrever_manuais=True. Datas fora do arquivo não são tocadas.
     """
+    dono = dono or usuario
     agora = agora or datetime.now().isoformat()
     periodo_de = periodo_de.isoformat() if hasattr(periodo_de, "isoformat") else str(periodo_de)
     periodo_ate = periodo_ate.isoformat() if hasattr(periodo_ate, "isoformat") else str(periodo_ate)
     with conn:
         cursor = conn.execute(
-            "INSERT INTO ponto_uploads (usuario, nome_arquivo, enviado_em, "
-            "periodo_de, periodo_ate, linhas, avisos) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (usuario, nome_arquivo, agora, periodo_de, periodo_ate,
+            "INSERT INTO ponto_uploads (usuario, dono, nome_arquivo, "
+            "enviado_em, periodo_de, periodo_ate, linhas, avisos) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (usuario, dono, nome_arquivo, agora, periodo_de, periodo_ate,
              len(registros), json.dumps(avisos, ensure_ascii=False)))
         upload_id = cursor.lastrowid
         for registro in registros:
             data = registro["data"]
             data_iso = data.isoformat() if hasattr(data, "isoformat") else str(data)
             existente = conn.execute(
-                "SELECT origem FROM ponto_registros WHERE data=?",
-                (data_iso,)).fetchone()
+                "SELECT origem FROM ponto_registros WHERE dono=? AND data=?",
+                (dono, data_iso)).fetchone()
             if (existente is not None and existente["origem"] == "manual"
                     and not sobrescrever_manuais):
                 continue
             conn.execute(
-                "INSERT INTO ponto_registros (upload_id, data, entrada, saida, "
-                "tipo, observacao, origem) VALUES (?, ?, ?, ?, ?, ?, 'upload') "
-                "ON CONFLICT(data) DO UPDATE SET "
+                "INSERT INTO ponto_registros (upload_id, dono, data, entrada, "
+                "saida, tipo, observacao, origem) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'upload') "
+                "ON CONFLICT(dono, data) DO UPDATE SET "
                 "upload_id=excluded.upload_id, entrada=excluded.entrada, "
                 "saida=excluded.saida, tipo=excluded.tipo, "
                 "observacao=excluded.observacao, origem='upload', "
                 "atualizado_em=NULL, atualizado_por=NULL",
-                (upload_id, data_iso, registro.get("entrada"),
+                (upload_id, dono, data_iso, registro.get("entrada"),
                  registro.get("saida"), registro.get("tipo", "trabalho"),
                  registro.get("observacao")))
     return upload_id
 
 
 def salvar_registro_manual(conn, data, entrada, saida, tipo, observacao,
-                           usuario, agora=None):
-    """Cria/atualiza um dia com origem 'manual' e registra o autor."""
+                           usuario, agora=None, dono=None):
+    """Cria/atualiza um dia com origem 'manual' do dono (padrão: o autor)."""
+    dono = dono or usuario
     agora = agora or datetime.now().isoformat()
     data_iso = data.isoformat() if hasattr(data, "isoformat") else str(data)
     conn.execute(
-        "INSERT INTO ponto_registros (upload_id, data, entrada, saida, tipo, "
-        "observacao, origem, atualizado_em, atualizado_por) "
-        "VALUES (NULL, ?, ?, ?, ?, ?, 'manual', ?, ?) "
-        "ON CONFLICT(data) DO UPDATE SET "
+        "INSERT INTO ponto_registros (upload_id, dono, data, entrada, saida, "
+        "tipo, observacao, origem, atualizado_em, atualizado_por) "
+        "VALUES (NULL, ?, ?, ?, ?, ?, ?, 'manual', ?, ?) "
+        "ON CONFLICT(dono, data) DO UPDATE SET "
         "upload_id=NULL, entrada=excluded.entrada, saida=excluded.saida, "
         "tipo=excluded.tipo, observacao=excluded.observacao, origem='manual', "
         "atualizado_em=excluded.atualizado_em, "
         "atualizado_por=excluded.atualizado_por",
-        (data_iso, entrada, saida, tipo, observacao, agora, usuario))
+        (dono, data_iso, entrada, saida, tipo, observacao, agora, usuario))
     conn.commit()
 
 
-def excluir_registro_ponto(conn, data):
-    """Remove o dia; devolve o número de linhas apagadas."""
+def excluir_registro_ponto(conn, dono, data):
+    """Remove o dia do dono; devolve o número de linhas apagadas."""
     data_iso = data.isoformat() if hasattr(data, "isoformat") else str(data)
-    cursor = conn.execute("DELETE FROM ponto_registros WHERE data=?", (data_iso,))
+    cursor = conn.execute(
+        "DELETE FROM ponto_registros WHERE dono=? AND data=?", (dono, data_iso))
     conn.commit()
     return cursor.rowcount
 
 
-def ultimo_upload_ponto(conn):
-    """Última linha de ponto_uploads (ou None)."""
+def ultimo_upload_ponto(conn, dono=None):
+    """Última linha de ponto_uploads do dono (ou None). dono=None vê todos."""
+    if dono is None:
+        return conn.execute(
+            "SELECT * FROM ponto_uploads ORDER BY id DESC LIMIT 1").fetchone()
     return conn.execute(
-        "SELECT * FROM ponto_uploads ORDER BY id DESC LIMIT 1").fetchone()
+        "SELECT * FROM ponto_uploads WHERE dono=? ORDER BY id DESC LIMIT 1",
+        (dono,)).fetchone()
 
 
-def listar_uploads_ponto(conn, limite=20):
-    """Uploads mais recentes primeiro."""
+def listar_uploads_ponto(conn, dono=None, limite=20):
+    """Uploads mais recentes primeiro; dono=None lista todos."""
+    if dono is None:
+        return conn.execute(
+            "SELECT * FROM ponto_uploads ORDER BY id DESC LIMIT ?",
+            (limite,)).fetchall()
     return conn.execute(
-        "SELECT * FROM ponto_uploads ORDER BY id DESC LIMIT ?", (limite,)).fetchall()
+        "SELECT * FROM ponto_uploads WHERE dono=? ORDER BY id DESC LIMIT ?",
+        (dono, limite)).fetchall()
 
 
-def registros_ponto(conn):
-    """Todos os dias, em ordem de data, com data já convertida para date."""
-    linhas = conn.execute(
-        "SELECT data, entrada, saida, tipo, observacao, origem, "
-        "atualizado_em, atualizado_por FROM ponto_registros ORDER BY data").fetchall()
+def registros_ponto(conn, dono=None):
+    """Dias do dono (ou todos, com dono=None), em ordem de data."""
+    sql = ("SELECT dono, data, entrada, saida, tipo, observacao, origem, "
+           "atualizado_em, atualizado_por FROM ponto_registros")
+    parametros = ()
+    if dono is not None:
+        sql += " WHERE dono=?"
+        parametros = (dono,)
+    sql += " ORDER BY data"
+    linhas = conn.execute(sql, parametros).fetchall()
     return [{
+        "dono": linha["dono"],
         "data": date.fromisoformat(linha["data"]),
         "entrada": linha["entrada"],
         "saida": linha["saida"],

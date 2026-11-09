@@ -136,7 +136,7 @@ def test_salvar_registro_manual_cria_e_atualiza(tmp_path):
                                  agora="2026-11-06T10:00:00")
     banco.salvar_registro_manual(conn, date(2026, 11, 3), "09:00", "19:00",
                                  "trabalho", "obs", "ana",
-                                 agora="2026-11-06T11:00:00")
+                                 agora="2026-11-06T11:00:00", dono="leo")
     registro = banco.registros_ponto(conn)[0]
     assert registro["entrada"] == "09:00"
     assert registro["origem"] == "manual"
@@ -149,8 +149,53 @@ def test_excluir_registro_ponto(tmp_path):
     conn = _conn(tmp_path)
     banco.salvar_registro_manual(conn, date(2026, 11, 3), "08:00", "17:00",
                                  "trabalho", None, "leo")
-    assert banco.excluir_registro_ponto(conn, date(2026, 11, 3)) == 1
+    assert banco.excluir_registro_ponto(conn, "leo", date(2026, 11, 3)) == 1
     assert banco.registros_ponto(conn) == []
+    conn.close()
+
+
+def test_pontos_de_usuarios_diferentes_nao_se_misturam(tmp_path):
+    """09/11/2026: cada usuário alimenta o próprio ponto; o mesmo dia pode
+    existir para pessoas diferentes sem uma sobrescrever a outra."""
+    conn = _conn(tmp_path)
+    banco.salvar_registro_manual(conn, date(2026, 11, 3), "08:00", "17:00",
+                                 "trabalho", None, "leo")
+    banco.salvar_registro_manual(conn, date(2026, 11, 3), "10:00", "19:00",
+                                 "trabalho", None, "ana")
+    assert [r["entrada"] for r in banco.registros_ponto(conn, "leo")] == ["08:00"]
+    assert [r["entrada"] for r in banco.registros_ponto(conn, "ana")] == ["10:00"]
+    assert len(banco.registros_ponto(conn)) == 2
+    conn.close()
+
+
+def test_importacao_de_um_dono_nao_toca_no_ponto_do_outro(tmp_path):
+    conn = _conn(tmp_path)
+    banco.salvar_importacao_ponto(
+        conn, "leo", "leo.xlsx",
+        [_registro(date(2026, 11, 3), "08:00", "18:00")],
+        date(2026, 11, 3), date(2026, 11, 3), [])
+    banco.salvar_importacao_ponto(
+        conn, "ana", "ana.xlsx",
+        [_registro(date(2026, 11, 3), "10:00", "19:00")],
+        date(2026, 11, 3), date(2026, 11, 3), [])
+    assert banco.registros_ponto(conn, "leo")[0]["entrada"] == "08:00"
+    assert banco.registros_ponto(conn, "ana")[0]["entrada"] == "10:00"
+    assert [u["nome_arquivo"] for u in banco.listar_uploads_ponto(conn, "leo")] \
+        == ["leo.xlsx"]
+    assert [u["nome_arquivo"] for u in banco.listar_uploads_ponto(conn, "ana")] \
+        == ["ana.xlsx"]
+    conn.close()
+
+
+def test_excluir_apaga_apenas_o_dia_do_dono(tmp_path):
+    conn = _conn(tmp_path)
+    banco.salvar_registro_manual(conn, date(2026, 11, 3), "08:00", "17:00",
+                                 "trabalho", None, "leo")
+    banco.salvar_registro_manual(conn, date(2026, 11, 3), "10:00", "19:00",
+                                 "trabalho", None, "ana")
+    assert banco.excluir_registro_ponto(conn, "leo", date(2026, 11, 3)) == 1
+    assert banco.registros_ponto(conn, "leo") == []
+    assert len(banco.registros_ponto(conn, "ana")) == 1
     conn.close()
 
 
@@ -164,4 +209,77 @@ def test_historico_de_uploads(tmp_path):
         date(2026, 11, 4), date(2026, 11, 4), [])
     uploads = banco.listar_uploads_ponto(conn)
     assert [u["nome_arquivo"] for u in uploads] == ["b.xlsx", "a.xlsx"]
+    conn.close()
+
+
+def test_migracao_separa_ponto_antigo_por_dono(tmp_path):
+    """Banco anterior a 09/11/2026 tem UNIQUE(data) e nenhum dono: a migração
+    precisa atribuir cada dia ao usuário do upload que o gravou (ou ao último
+    editor, ou ao primeiro admin) e recriar a tabela com UNIQUE(dono, data)."""
+    db = str(tmp_path / "antigo.db")
+    antigo = sqlite3.connect(db)
+    antigo.executescript("""
+        CREATE TABLE usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            login TEXT UNIQUE NOT NULL,
+            nome TEXT NOT NULL,
+            senha_hash TEXT NOT NULL,
+            admin INTEGER NOT NULL DEFAULT 0,
+            falhas_seguidas INTEGER NOT NULL DEFAULT 0,
+            bloqueado_ate TEXT,
+            criado_em TEXT NOT NULL);
+        CREATE TABLE ponto_uploads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario TEXT NOT NULL,
+            nome_arquivo TEXT NOT NULL,
+            enviado_em TEXT NOT NULL,
+            periodo_de TEXT NOT NULL,
+            periodo_ate TEXT NOT NULL,
+            linhas INTEGER NOT NULL,
+            avisos TEXT);
+        CREATE TABLE ponto_registros (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            upload_id INTEGER REFERENCES ponto_uploads(id),
+            data TEXT NOT NULL,
+            entrada TEXT,
+            saida TEXT,
+            tipo TEXT NOT NULL DEFAULT 'trabalho',
+            observacao TEXT,
+            origem TEXT NOT NULL DEFAULT 'upload',
+            atualizado_em TEXT,
+            atualizado_por TEXT,
+            UNIQUE(data));
+    """)
+    antigo.execute("INSERT INTO usuarios (login, nome, senha_hash, admin, "
+                   "criado_em) VALUES ('leo', 'Leo', 'x', 0, '2026-11-01')")
+    antigo.execute("INSERT INTO usuarios (login, nome, senha_hash, admin, "
+                   "criado_em) VALUES ('ana', 'Ana', 'x', 1, '2026-11-01')")
+    antigo.execute("INSERT INTO ponto_uploads (usuario, nome_arquivo, "
+                   "enviado_em, periodo_de, periodo_ate, linhas) VALUES "
+                   "('leo', 'leo.xlsx', '2026-11-01T10:00:00', '2026-11-03', "
+                   "'2026-11-05', 2)")
+    antigo.execute("INSERT INTO ponto_registros (upload_id, data, entrada, "
+                   "saida) VALUES (1, '2026-11-03', '08:00', '18:00')")
+    antigo.execute("INSERT INTO ponto_registros (upload_id, data, entrada, "
+                   "saida, origem, atualizado_por) VALUES (NULL, '2026-11-04', "
+                   "'09:00', '19:00', 'manual', 'ana')")
+    antigo.execute("INSERT INTO ponto_registros (data, entrada, saida) "
+                   "VALUES ('2026-11-05', '08:00', '18:00')")
+    antigo.commit()
+    antigo.close()
+
+    conn = banco.conectar(db)
+    banco.inicializar_banco(conn)
+    banco.inicializar_banco(conn)  # idempotente
+    leo = banco.registros_ponto(conn, "leo")
+    ana = banco.registros_ponto(conn, "ana")
+    assert [r["data"] for r in leo] == [date(2026, 11, 3)]
+    assert [r["data"] for r in ana] == [date(2026, 11, 4), date(2026, 11, 5)]
+    assert banco.listar_uploads_ponto(conn, "leo")[0]["nome_arquivo"] == "leo.xlsx"
+
+    # Depois da migração, o mesmo dia coexiste para donos diferentes.
+    banco.salvar_registro_manual(conn, date(2026, 11, 3), "10:00", "19:00",
+                                 "trabalho", None, "ana")
+    assert len(banco.registros_ponto(conn, "leo")) == 1
+    assert len(banco.registros_ponto(conn, "ana")) == 3
     conn.close()
