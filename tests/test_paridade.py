@@ -3,6 +3,7 @@
 O comparador compara arquivos, não engines: fixtures geradas com openpyxl
 são suficientes (o Hias real nunca é tocado aqui — regra global: só leitura).
 """
+import os
 import subprocess
 import sys
 import zipfile
@@ -26,8 +27,13 @@ def _criar(tmp_path, nome, abas, formato_bd2=None):
 
 
 def _rodar(a, b):
+    # encoding explícito nos DOIS lados: o texto tem acento ("diferenças") e
+    # `text=True` sozinho decodifica com a página de código da máquina — em
+    # terminal com PYTHONUTF8=1 a saída do filho é UTF-8 e virava mojibake
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
     return subprocess.run([sys.executable, "tests/paridade/comparar_versoes.py",
-                           str(a), str(b)], capture_output=True, text=True)
+                           str(a), str(b)], capture_output=True, text=True,
+                          encoding="utf-8", env=env)
 
 
 def _injetar_partes(caminho, partes):

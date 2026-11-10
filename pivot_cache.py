@@ -11,8 +11,12 @@ gravava no fluxo do pendrive (arquivo de referência de 03/09/2026):
 - timeline "Entrega" e slicers do arquivo do usuário são PRESERVADOS byte a
   byte (sem filtros forçados — filtros do mês de fechamento ou "só Comum"
   escondiam baixas e recursos no relatório);
-- refreshOnLoad é REMOVIDO das pivôs e dos caches (as pivôs renderizam dos
-  caches, de forma determinística, sem recalcular ao abrir).
+- refreshOnLoad é MARCADO nas pivôs e nos caches: o Excel recalcula ao abrir
+  e as abas mostram a soma atual (com e sem protocolo). Antes ele era removido
+  e o arquivo entregue ficava com as células do último salvamento em Excel —
+  números velhos nas quatro abas (10/11/2026);
+- o filtro de data forçado da aba À Quitar é REMOVIDO (o do arquivo do usuário
+  não tem filtro: a aba soma o Não Identificado inteiro).
 
 Toda a edição é por ancoragem textual (regex) sobre as partes XML — nenhuma
 parte é reescrita por parser, preservando atributos e estrutura byte a byte.
@@ -497,9 +501,78 @@ def colapsar_itens_pivot(xml: str, indice: int) -> str:
     return xml[:m.start()] + bloco + xml[m.end():]
 
 
-def remover_refresh_on_load(xml: str) -> str:
-    """Remove refreshOnLoad="1" da raiz (não recalcular pivô ao abrir)."""
-    return re.sub(r'\s+refreshOnLoad="\d"', "", xml, count=1)
+def mostrar_itens_pivot(xml: str, indice: int) -> str:
+    """Devolve TODOS os itens do campo à visão: remove h="1" dos <item> e
+    marca showAll="1". As abas Data Entrega e Data Vencimento escondiam o
+    Protocolo "(Em branco)" e o subtotal do convênio saía só com as remessas
+    protocoladas — o certo é somar com e sem protocolo (como a aba Data
+    Recebimento já faz). No-op quando o campo não tem item oculto."""
+    m = _campo_da_pivot(xml, indice)
+    bloco = m.group(0)
+    if bloco.endswith("/>") or 'h="1"' not in bloco:
+        return xml
+    bloco = re.sub(r'(<item\b[^>]*?)\s+h="\d+"', r"\1", bloco)
+    abre_velho = re.match(r"<pivotField\b[^>]*>", bloco).group(0)
+    abre_novo = re.sub(r'\bshowAll="\d+"', 'showAll="1"', abre_velho)
+    return (xml[:m.start()] + abre_novo + bloco[len(abre_velho):]
+            + xml[m.end():])
+
+
+def marcar_refresh_on_load(xml: str) -> str:
+    """Marca refreshOnLoad="1" na raiz (pivô e cache recalculam ao abrir).
+
+    Sem isso o arquivo entregue mostrava as células gravadas no último
+    salvamento em Excel — as abas Data Entrega / Data Vencimento / Data
+    Recebimento / À Quitar saíam com números velhos e o Leonardo via
+    diferença contra a planilha dele (10/11/2026)."""
+    if re.search(r'\srefreshOnLoad="\d"', xml):
+        return re.sub(r'\s+refreshOnLoad="\d"', ' refreshOnLoad="1"',
+                      xml, count=1)
+    m = re.search(r"<[A-Za-z][\w:]*\b[^>]*>", xml)
+    if m is None:
+        return xml
+    tag = m.group(0)
+    novo = (tag[:-2] + ' refreshOnLoad="1"/>' if tag.endswith("/>")
+            else tag[:-1] + ' refreshOnLoad="1">')
+    return xml[:m.start()] + novo + xml[m.end():]
+
+
+def remover_filtros_pivot(xml: str) -> str:
+    """Remove o <filters> do pivô (o filtro de data forçado da aba À Quitar:
+    dateBetween 46266–46295 = setembro/2026). O arquivo do usuário não tem
+    filtro — a aba soma o Não Identificado inteiro. No-op sem <filters>."""
+    return re.sub(r"<filters\b[^>]*>.*?</filters>", "", xml, count=1, flags=re.S)
+
+
+def nome_do_pivot(xml: str) -> str | None:
+    """Atributo name="..." do <pivotTableDefinition>."""
+    m = re.search(r'<pivotTableDefinition\b[^>]*\bname="([^"]*)"', xml)
+    return unescape(m.group(1)) if m else None
+
+
+def parte_timeline_do_pivot(partes: dict, nome_pivot: str) -> str | None:
+    """Parte xl/timelineCaches/timelineCacheN.xml que aponta para o pivô dado
+    (o Excel renumera as partes ao salvar — a seleção é pelo conteúdo)."""
+    for nome in sorted(partes):
+        if not re.fullmatch(r"xl/timelineCaches/timelineCache\d+\.xml", nome):
+            continue
+        for m in re.finditer(r'<pivotTable\b[^>]*\bname="([^"]*)"',
+                             partes[nome]):
+            if unescape(m.group(1)) == nome_pivot:
+                return nome
+    return None
+
+
+def limpar_selecao_timeline(xml: str) -> str:
+    """Tira a janela de datas da linha do tempo: filterType="unknown" e sem
+    <selection> (estado do arquivo do usuário na aba À Quitar — sem filtro).
+    No-op quando a linha do tempo já está sem seleção."""
+    if 'filterType="dateBetween"' not in xml:
+        return xml
+    xml = re.sub(r'filterType="dateBetween"', 'filterType="unknown"',
+                 xml, count=1)
+    return re.sub(r"<selection\b[^>]*(?:/>|>.*?</selection>)", "",
+                  xml, count=1, flags=re.S)
 
 
 def anexar_itens_slicer(xml: str, novos: list[int]) -> str:

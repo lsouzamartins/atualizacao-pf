@@ -278,6 +278,23 @@ def _remessas_bd1(xml_bd1: str, strings) -> set:
     return remessas
 
 
+_RE_PROTOCOLO_BR = re.compile(r"\d{1,3}(?:\.\d{3})+(?:,\d+)?")
+
+
+def _protocolo_wpd(v) -> int | str:
+    """Protocolo na forma da BD1: int quando é número, texto quando não é.
+    O leitor do WPD entrega número formatado em pt-BR ('3.400,00') como TEXTO;
+    sem desmontar o separador ele iria para a planilha como texto e a remessa
+    sairia do pivô (que trata o Protocolo em branco à parte)."""
+    s = str(v).strip()
+    if _RE_PROTOCOLO_BR.fullmatch(s):
+        return int(s.split(",")[0].replace(".", ""))
+    try:
+        return int(float(s))
+    except (ValueError, TypeError):
+        return s
+
+
 def _converter_linha_wpd(linha) -> dict:
     """Converte uma linha do WPD para o formato das células da BD1
     (espelha _anexar_emissoes_bd1: NaN->None, Protocolo->int/str, datas)."""
@@ -289,10 +306,7 @@ def _converter_linha_wpd(linha) -> dict:
         elif col in COLUNAS_DATA:
             dados[col] = pd.Timestamp(v).to_pydatetime().date()
         elif col == "Protocolo":
-            try:
-                dados[col] = int(float(str(v).strip()))
-            except (ValueError, TypeError):
-                dados[col] = str(v).strip()
+            dados[col] = _protocolo_wpd(v)
         else:
             # a BD1 guarda os percentuais na convenção ×100 (0–100); o WPD-26
             # traz a fração (0–1) — converte aqui, no funil único de linhas
@@ -586,7 +600,13 @@ def _editar_bd1(xml_bd1: str, novas: pd.DataFrame, strings) -> tuple | None:
 # A Fase 3a só ANEXA remessas novas — a baixa de uma remessa que já está na
 # base nunca era aplicada. O upsert corrige isso: Baixa (F) e valores (I–Q)
 # das linhas existentes são atualizados quando o WPD traz dado novo.
-_COL_UPSERT = {"Baixa": "F", "Faturado": "I", "Valor Pago": "J", "Valor ISS": "K",
+# Protocolo (B), Vencimento (D) e Entrega (E) entraram em 10/11/2026: remessa
+# que nasceu sem protocolo no WPD ficava com a célula vazia para sempre — e o
+# pivô exclui o Protocolo em branco, então ela sumia das abas Data Entrega e
+# Data Vencimento (1.280 remessas; 43 vencimentos e 535 entregas defasados).
+# Emissão (C) fica FORA de propósito: nunca divergiu do WPD.
+_COL_UPSERT = {"Protocolo": "B", "Vencimento": "D", "Entrega": "E",
+               "Baixa": "F", "Faturado": "I", "Valor Pago": "J", "Valor ISS": "K",
                "Vlr Guia": "L", "% Pré-glosa": "M", "Valor Glosa": "N", "% Glosa": "O",
                "Atraso": "P", "Faturas": "Q"}
 _COLS_UPSERT_APOS_BAIXA = ["Faturado", "Valor Pago", "Valor ISS", "Vlr Guia",
@@ -631,14 +651,21 @@ def _valor_celula(corpo: str, letra: str, num_linha: int) -> str | None:
 
 
 def _trocar_celula_valor(corpo: str, letra: str, num_linha: int,
-                         valor: str, estilo_quando_vazio: int) -> str:
+                         valor: str, estilo_quando_vazio: int,
+                         tipo: str | None = None) -> str:
     """Troca o <v> da célula preservando o estilo; célula vazia/ausente é
     criada com `estilo_quando_vazio` (o estilo dominante da coluna — o estilo
-    de uma célula vazia não indica o visual de uma célula preenchida)."""
+    de uma célula vazia não indica o visual de uma célula preenchida).
+    `tipo` é o t= da célula NOVA: None = número (remove t= herdado, ex.: uma
+    célula t="s" que passa a guardar número), "str" = texto inline."""
+    def _attrs(base: str) -> str:
+        base = re.sub(r'\s+t="[^"]*"', "", base)
+        return base + (f' t="{tipo}"' if tipo is not None else "")
+
     ref = f"{letra}{num_linha}"
     m = re.search(rf'<c r="{ref}"((?:[^<]*[^/>])?)>(.*?)</c>', corpo, flags=re.DOTALL)
     if m:
-        attrs, conteudo = m.group(1), m.group(2)
+        attrs, conteudo = _attrs(m.group(1)), m.group(2)
         if re.search(r"<v>.*?</v>", conteudo, flags=re.DOTALL):
             novo_conteudo = re.sub(r"<v>.*?</v>", f"<v>{valor}</v>", conteudo,
                                    count=1, flags=re.DOTALL)
@@ -648,21 +675,54 @@ def _trocar_celula_valor(corpo: str, letra: str, num_linha: int,
                 + corpo[m.end():])
     m = re.search(rf'<c r="{ref}"([^<]*)/>', corpo)
     if m:
-        attrs = re.sub(r'\s+s="\d+"', "", m.group(1)) + f' s="{estilo_quando_vazio}"'
+        attrs = _attrs(re.sub(r'\s+s="\d+"', "", m.group(1))
+                       + f' s="{estilo_quando_vazio}"')
         return (corpo[:m.start()] + f'<c r="{ref}"{attrs}><v>{valor}</v></c>'
                 + corpo[m.end():])
-    nova = f'<c r="{ref}" s="{estilo_quando_vazio}"><v>{valor}</v></c>'
-    return corpo.rstrip()[:-len("</row>")] + nova + "</row>"
+    nova = (f'<c r="{ref}" s="{estilo_quando_vazio}"'
+            + (f' t="{tipo}"' if tipo is not None else "") + f'><v>{valor}</v></c>')
+    # célula ausente: entra na POSIÇÃO da coluna (o Excel exige as <c> em
+    # ordem crescente; anexar no fim deixaria B/D/E depois de F–V)
+    sem_fim = corpo.rstrip()[:-len("</row>")]
+    pos = len(sem_fim)
+    for m in re.finditer(rf'<c r="([A-Z]+){num_linha}"', sem_fim):
+        if m.group(1) > letra:
+            pos = m.start()
+            break
+    return sem_fim[:pos] + nova + sem_fim[pos:] + "</row>"
+
+
+def _tipo_celula(corpo: str, letra: str, num_linha: int) -> str | None:
+    """Atributo t= da célula ("s", "str", ...); None quando não tem."""
+    m = re.search(rf'<c r="{letra}{num_linha}"([^>]*)>', corpo)
+    if m is None:
+        return None
+    t = re.search(r'\bt="([^"]*)"', m.group(1))
+    return t.group(1) if t else None
+
+
+def _protocolo_igual(atual: str | None, novo) -> bool:
+    """Mesmo protocolo? Texto numérico e número contam igual ('17099679' =
+    17099679): a base antiga guarda protocolos como texto e não vale reescrever
+    célula igual — nem tirar o item de texto do cache à toa."""
+    if atual is None or atual.strip() == "":
+        return False
+    a = atual.strip()
+    try:
+        return float(a) == float(str(novo).strip())
+    except (TypeError, ValueError):
+        return a == str(novo).strip()
 
 
 def _upsert_bd1(xml_bd1: str, df_wpd: pd.DataFrame, remessas_existentes: set,
                 strings) -> tuple[str, list[dict], int] | None:
-    """UPSERT das remessas do WPD que JÁ existem na BD1: preenche/atualiza a
-    Baixa (F) e os valores (I–Q) das linhas existentes. Baixa=None no WPD NÃO
-    desfaz uma baixa já gravada. Células vazias recebem o estilo DOMINANTE da
-    coluna na própria base (mapa de _estilos_dominantes). Retorna (xml_novo,
-    mudanças, células alteradas) ou None se nada mudou. Cada mudança:
-    {remessa_norm, num_linha, dados (de _converter_linha_wpd), campos}."""
+    """UPSERT das remessas do WPD que JÁ existem na BD1: preenche/atualiza o
+    Protocolo (B), Vencimento (D), Entrega (E), a Baixa (F) e os valores
+    (I–Q) das linhas existentes. Campo vazio no WPD NÃO desfaz o que já está
+    gravado. Células vazias recebem o estilo DOMINANTE da coluna na própria
+    base (mapa de _estilos_dominantes). Retorna (xml_novo, mudanças, células
+    alteradas) ou None se nada mudou. Cada mudança: {remessa_norm, num_linha,
+    dados (de _converter_linha_wpd), campos}."""
     linhas = _linhas_bd1(xml_bd1, strings)
     estilos = _estilos_dominantes(xml_bd1, "ABCDEFGHIJKLMNOPQRSTUV")
     por_linha: dict[int, tuple[str, str]] = {}   # num_linha -> (abertura, corpo_novo)
@@ -680,13 +740,29 @@ def _upsert_bd1(xml_bd1: str, df_wpd: pd.DataFrame, remessas_existentes: set,
             if novo is None:
                 continue  # sem valor no WPD: preserva o que está na planilha
             atual = _valor_celula(corpo_novo, letra, num_linha)
-            if col == "Baixa":
+            if col in COLUNAS_DATA:  # Baixa, Vencimento, Entrega: data -> serial
                 serial = _numero((novo - SERIAL_EPOCA).days)
                 if _float_iguais(atual, serial):
                     continue
                 corpo_novo = _trocar_celula_valor(corpo_novo, letra, num_linha,
                                                   serial,
-                                                  estilo_quando_vazio=estilos["F"]["valor"])
+                                                  estilo_quando_vazio=estilos[letra]["valor"])
+            elif col == "Protocolo":
+                atual_p = atual
+                if atual is not None and _tipo_celula(corpo_novo, letra,
+                                                      num_linha) == "s":
+                    # t="s" guarda o ÍNDICE no SST, não o texto: resolve antes
+                    # de comparar, senão todo protocolo de texto seria reescrito
+                    try:
+                        atual_p = strings.texto_de_indice(int(atual))
+                    except (IndexError, ValueError):
+                        atual_p = atual
+                if _protocolo_igual(atual_p, novo):
+                    continue
+                corpo_novo = _trocar_celula_valor(
+                    corpo_novo, letra, num_linha, _numero(novo),
+                    estilo_quando_vazio=estilos[letra]["valor"],
+                    tipo=None if isinstance(novo, numbers.Real) else "str")
             else:
                 canon = _numero(novo)
                 if _float_iguais(atual, canon):
@@ -1165,9 +1241,10 @@ def _atualizar_records_bd1(cache: pc.CachePivot, mudancas: list[dict],
     """Upsert dos records do cache da BD1: o record é localizado pelo x-ref da
     Remessa (entrada 0) — o cache da base vem dessincronizado das linhas da
     planilha em trechos antigos, então a posição NÃO serve de chave. Só as
-    posições dos campos alterados são reescritas (5 = Baixa via x-ref novo no
-    sharedItems; 8–16 = valores <n>); 17–20 (calculados R–U) são reavaliados
-    com TODAY() = data de geração, como em _record_bd1."""
+    posições dos campos alterados são reescritas (1 = Protocolo; 3–4 =
+    Vencimento/Entrega; 5 = Baixa, via x-ref novo no sharedItems; 8–16 =
+    valores <n>); 17–20 (calculados R–U) são reavaliados com TODAY() = data de
+    geração, como em _record_bd1."""
     if not mudancas:
         return
     blocos = cache.blocos()
@@ -1183,15 +1260,19 @@ def _atualizar_records_bd1(cache: pc.CachePivot, mudancas: list[dict],
     mapa: dict[int, str] = {}
     for mudanca in mudancas:
         rem = mudanca["remessa_norm"]
-        alvo = itens_remessa.get(("n", rem))
-        if alvo is None and re.fullmatch(r"\d+", rem):
-            alvo = itens_remessa.get(("n", rem + ".0"))
-        if alvo is None:
-            alvo = itens_remessa.get(("s", rem))
-        if alvo is None:
+        # o mesmo número pode existir DUAS vezes no sharedItems (como <n> e
+        # como <s>, ex.: 150689 nos índices 37193 e 37315) e o record pode
+        # apontar para qualquer um dos dois — então vale o primeiro índice
+        # que realmente tenha record.
+        chaves = [("n", rem), ("s", rem)]
+        if re.fullmatch(r"\d+", rem):
+            chaves.insert(1, ("n", rem + ".0"))
+        indices = [itens_remessa[k] for k in chaves if k in itens_remessa]
+        if not indices:
             raise RuntimeError(
                 f"remessa {rem!r} não localizada no sharedItems do cache BD1")
-        indice_record = por_entrada0.get(alvo)
+        indice_record = next(
+            (por_entrada0[i] for i in indices if i in por_entrada0), None)
         if indice_record is None:
             raise RuntimeError(
                 f"remessa {rem!r} não localizada nos records do cache BD1")
@@ -1200,6 +1281,16 @@ def _atualizar_records_bd1(cache: pc.CachePivot, mudancas: list[dict],
             entradas.append("<m/>")
         campos = set(mudanca["campos"])
         dados = mudanca["dados"]
+        if "Protocolo" in campos:
+            protocolo = dados["Protocolo"]
+            entradas[1] = (_x_ref(cache, "Protocolo", "s", protocolo)
+                           if isinstance(protocolo, str)
+                           else _x_ref_ou_blank(cache, "Protocolo", "n",
+                                                _numero(protocolo)))
+        for i, col in enumerate(("Vencimento", "Entrega")):
+            if col in campos:
+                entradas[3 + i] = _x_ref_ou_blank(cache, col, "d",
+                                                  _iso_cache(dados[col]))
         if "Baixa" in campos:
             entradas[5] = _x_ref_ou_blank(cache, "Baixa", "d",
                                           _iso_cache(dados["Baixa"]))
@@ -1315,7 +1406,7 @@ def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
     novos_por_campo_bd1 = cache_bd1.novos_por_campo()
     for i in (1, 2, 3):
         nome = f"xl/pivotTables/pivotTable{i}.xml"
-        xml = pc.remover_refresh_on_load(partes[nome])
+        xml = partes[nome]
         for idx, nome_campo in enumerate(cache_bd1.campos_ordenados()):
             if nome_campo not in novos_por_campo_bd1 or not pc.campo_tem_itens(xml, idx):
                 continue
@@ -1326,9 +1417,21 @@ def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
                 xml = pc.colapsar_itens_pivot(xml, idx)
         substituicoes[nome] = xml
 
+    # -- o pivô NÃO pode esconder o Protocolo "(Em branco)": as abas Data
+    # Entrega e Data Vencimento filtravam o branco e o subtotal de cada
+    # convênio saía só com as remessas protocoladas. O certo é somar COM e SEM
+    # protocolo (a aba Data Recebimento já fazia assim). 10/11/2026 --
+    idx_protocolo = cache_bd1.campos_ordenados().index("Protocolo")
+    for i in (1, 2, 3):
+        nome = f"xl/pivotTables/pivotTable{i}.xml"
+        substituicoes[nome] = pc.marcar_refresh_on_load(
+            pc.mostrar_itens_pivot(substituicoes[nome], idx_protocolo))
+
     # -- pivô 4 (À Quitar, cache BD2): campos 0 (Convênio) e 1 (Data) --
+    # o filtro de data forçado (setembro/2026) sai: a aba do usuário não tem
+    # filtro e soma o Não Identificado inteiro
     nome_p4 = "xl/pivotTables/pivotTable4.xml"
-    xml_p4 = pc.remover_refresh_on_load(partes[nome_p4])
+    xml_p4 = pc.remover_filtros_pivot(partes[nome_p4])
     novos_por_campo_bd2 = cache_bd2.novos_por_campo()
     for idx, nome_campo in enumerate(cache_bd2.campos_ordenados()):
         if nome_campo not in novos_por_campo_bd2 or not pc.campo_tem_itens(xml_p4, idx):
@@ -1338,11 +1441,25 @@ def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
                                        com_sd=com_sd)
         if com_sd:
             xml_p4 = pc.colapsar_itens_pivot(xml_p4, idx)
-    substituicoes[nome_p4] = xml_p4
+    substituicoes[nome_p4] = pc.marcar_refresh_on_load(xml_p4)
 
-    # -- grava os caches regenerados --
+    # -- a LINHA DO TEMPO do À Quitar volta a "sem seleção": no template ela
+    # estava parada em setembro/2026 e o arquivo do usuário não tem filtro —
+    # a aba soma o Não Identificado inteiro. As demais timelines (Entrega/
+    # Vencimento/Baixa) já vêm sem seleção e ficam intocadas. 10/11/2026 --
+    nome_pivot4 = pc.nome_do_pivot(partes[nome_p4])
+    nome_tl_p4 = (pc.parte_timeline_do_pivot(partes, nome_pivot4)
+                  if nome_pivot4 else None)
+    if nome_tl_p4 is not None:
+        substituicoes[nome_tl_p4] = pc.limpar_selecao_timeline(
+            partes[nome_tl_p4])
+
+    # -- grava os caches regenerados (com recálculo ao abrir) --
     substituicoes[nome_def_bd1], substituicoes[nome_rec_bd1] = cache_bd1.para_xml()
     substituicoes[nome_def_bd2], substituicoes[nome_rec_bd2] = cache_bd2.para_xml()
+    for nome_def in (nome_def_bd1, nome_def_bd2):
+        substituicoes[nome_def] = pc.marcar_refresh_on_load(
+            substituicoes[nome_def])
 
     esperado_bd2 = (n_inicial_bd2 + len(novas_bd2)
                     if fim_bd2_novo is not None else None)
@@ -1358,8 +1475,22 @@ def _validar_pivos(substituicoes: dict, partes: dict, cache_bd1: pc.CachePivot,
     erros = []
     for i in (1, 2, 3, 4):
         xml = substituicoes.get(f"xl/pivotTables/pivotTable{i}.xml")
-        if xml is not None and "refreshOnLoad" in xml:
-            erros.append(f"pivotTable{i} ainda contém refreshOnLoad")
+        if xml is not None and "refreshOnLoad" not in xml:
+            erros.append(f"pivotTable{i} sem refreshOnLoad (abriria com "
+                         f"números velhos)")
+    for nome_def in (pc.parte_cache_bd1(partes), pc.parte_cache_bd2(partes)):
+        xml = substituicoes.get(nome_def)
+        if xml is not None and "refreshOnLoad" not in xml:
+            erros.append(f"{nome_def} sem refreshOnLoad")
+    p4 = substituicoes.get("xl/pivotTables/pivotTable4.xml")
+    if p4 is not None and "<filters" in p4:
+        erros.append("pivotTable4 ainda tem filtro de data (À Quitar)")
+    if p4 is not None:
+        nome_pivot4 = pc.nome_do_pivot(p4)
+        tl = (pc.parte_timeline_do_pivot(partes, nome_pivot4)
+              if nome_pivot4 else None)
+        if tl is not None and "<selection" in substituicoes.get(tl, ""):
+            erros.append("linha do tempo do À Quitar ainda com seleção")
     if fim_bd1_novo is not None and cache_bd1.n_registros != fim_bd1_novo - 1:
         erros.append(f"cache BD1 com {cache_bd1.n_registros} records ≠ planilha "
                      f"({fim_bd1_novo - 1} linhas de dados)")

@@ -26,6 +26,8 @@ SER_31MAR = (date(2026, 3, 31) - ie.SERIAL_EPOCA).days      # 46112
 SER_28JAN = (date(2026, 1, 28) - ie.SERIAL_EPOCA).days
 SER_13MAR = (date(2026, 3, 13) - ie.SERIAL_EPOCA).days
 SER_30JAN = (date(2026, 1, 30) - ie.SERIAL_EPOCA).days
+SER_13AGO = (date(2026, 8, 13) - ie.SERIAL_EPOCA).days      # venc. no WPD
+SER_25JUN = (date(2026, 6, 25) - ie.SERIAL_EPOCA).days      # entrega no WPD
 
 
 def _sst(textos):
@@ -37,10 +39,13 @@ def _sst(textos):
 
 def _strings():
     """SST sintético alinhado com a _sheet5_minima: as células t="s" usam os
-    índices 22 (H2) e 23 (A3) — o SST do arquivo real tem milhares de <si>."""
-    textos = [f"pre{i}" for i in range(24)]
+    índices 22 (H2), 23 (A3) e 24/25 (protocolo como texto) — o SST do arquivo
+    real tem milhares de <si>."""
+    textos = [f"pre{i}" for i in range(26)]
     textos[22] = "HOSPITAL ABC"
     textos[23] = "146283 (R)"
+    textos[24] = "17099679"      # protocolo como texto, MESMO valor do WPD
+    textos[25] = "NÚMERO"        # protocolo-lixo que o WPD corrige
     return ie._StringsCompartilhadas(_sst(textos))
 
 
@@ -150,13 +155,17 @@ def test_upsert_bd1_preenche_baixa_vazia_e_atualiza_pago():
                                {"138055", "146283 (R)"}, strings)
     assert resultado is not None
     xml_novo, mudancas, n_celulas = resultado
-    assert n_celulas == 4                      # F2, J2, F3, J3
+    assert n_celulas == 6                      # F2, J2, F3, J3, D3, E3
     assert '<c r="F2" s="57"><v>46267</v></c>' in xml_novo   # vazio -> data s=57
     assert '<c r="J2"><v>6997.92</v></c>' in xml_novo
     assert f'<c r="F3" s="57"><v>{SER_02SET}</v></c>' in xml_novo  # estilo mantido
     assert '<c r="J3"><v>5360.22</v></c>' in xml_novo
+    # Vencimento/Entrega da 146283 (R) vêm do WPD (antes: 13/03 e 30/01)
+    assert f'<c r="D3" s="57"><v>{SER_13AGO}</v></c>' in xml_novo
+    assert f'<c r="E3" s="57"><v>{SER_25JUN}</v></c>' in xml_novo
     assert {m["remessa_norm"] for m in mudancas} == {"138055", "146283 (R)"}
     assert all({"Baixa", "Valor Pago"} <= set(m["campos"]) for m in mudancas)
+    assert {"Vencimento", "Entrega"} <= set(mudancas[1]["campos"])
 
 
 def test_upsert_bd1_nao_reescreve_celula_igual_nem_campos_estruturais():
@@ -166,10 +175,16 @@ def test_upsert_bd1_nao_reescreve_celula_igual_nem_campos_estruturais():
                                             {"138055", "146283 (R)"}, strings)
     # I (Faturado) idêntico ao WPD: célula preservada byte a byte
     assert '<c r="I2"><v>6997.92</v></c>' in xml_novo
-    # B (Protocolo), C/D/E (datas), H (Convênio) intocados
+    # H (Convênio) e as datas da linha 2 (já iguais ao WPD) intocados
     assert '<c r="B2"><v>331224784456</v></c>' in xml_novo
     assert f'<c r="C2" s="57"><v>{SER_28JAN}</v></c>' in xml_novo
+    assert f'<c r="D2" s="57"><v>{SER_13MAR}</v></c>' in xml_novo
+    assert f'<c r="E2" s="57"><v>{SER_30JAN}</v></c>' in xml_novo
     assert '<c r="H2" t="s"><v>22</v></c>' in xml_novo
+    # C (Emissão) fica FORA do upsert de propósito: nunca divergiu do WPD
+    assert f'<c r="C3" s="57"><v>{SER_28JAN}</v></c>' in xml_novo
+    # B3 igual ao WPD (mesmo número): célula preservada
+    assert '<c r="B3"><v>17099679</v></c>' in xml_novo
 
 
 def test_upsert_bd1_sem_mudanca_devolve_none():
@@ -178,7 +193,53 @@ def test_upsert_bd1_sem_mudanca_devolve_none():
     wpd = _wpd_com_baixas()
     wpd["Baixa"] = [None, None]
     wpd["Valor Pago"] = [0.0, 1637.7]
+    # Protocolo/Vencimento/Entrega da linha 3 = os mesmos já gravados
+    wpd.loc[1, "Vencimento"] = datetime(2026, 3, 13)
+    wpd.loc[1, "Entrega"] = datetime(2026, 1, 30)
     assert ie._upsert_bd1(xml, wpd, {"138055", "146283 (R)"}, strings) is None
+
+
+def test_upsert_bd1_preenche_protocolo_vazio():
+    """Remessa que nasceu no WPD sem protocolo e ganhou protocolo depois: a
+    célula B tem de ser preenchida — o pivô separa o Protocolo em branco."""
+    strings = _strings()
+    xml = _sheet5_minima().replace('<c r="B2"><v>331224784456</v></c>',
+                                   '<c r="B2" s="48"/>')
+    xml_novo, mudancas, _ = ie._upsert_bd1(xml, _wpd_com_baixas(),
+                                            {"138055", "146283 (R)"}, strings)
+    assert '<c r="B2" s="0"><v>331224784456</v></c>' in xml_novo
+    assert "Protocolo" in mudancas[0]["campos"]
+
+
+def test_upsert_bd1_nao_reescreve_protocolo_texto_com_mesmo_valor():
+    """A base antiga guarda protocolo como texto (t="s"); se o valor é o
+    mesmo, a célula fica como está — nada de reformar a planilha à toa."""
+    strings = _strings()
+    xml = _sheet5_minima().replace('<c r="B3"><v>17099679</v></c>',
+                                   '<c r="B3" t="s"><v>24</v></c>')
+    xml_novo, mudancas, _ = ie._upsert_bd1(xml, _wpd_com_baixas(),
+                                            {"138055", "146283 (R)"}, strings)
+    assert '<c r="B3" t="s"><v>24</v></c>' in xml_novo
+    assert all("Protocolo" not in m["campos"] for m in mudancas)
+
+
+def test_upsert_bd1_troca_protocolo_texto_por_numero():
+    """Protocolo que era texto e o WPD corrige: vira NÚMERO (o t="s" sai,
+    senão o Excel mostraria o índice do SST)."""
+    strings = _strings()
+    xml = _sheet5_minima().replace('<c r="B3"><v>17099679</v></c>',
+                                   '<c r="B3" t="s"><v>25</v></c>')
+    xml_novo, mudancas, _ = ie._upsert_bd1(xml, _wpd_com_baixas(),
+                                            {"138055", "146283 (R)"}, strings)
+    assert '<c r="B3"><v>17099679</v></c>' in xml_novo
+    assert "Protocolo" in mudancas[1]["campos"]
+
+
+def test_protocolo_wpd_aceita_numero_e_texto_brasileiro():
+    assert ie._protocolo_wpd(331224784456) == 331224784456
+    assert ie._protocolo_wpd("146283") == 146283
+    assert ie._protocolo_wpd("3.400,00") == 3400      # pt-BR: vira número
+    assert ie._protocolo_wpd("NÚMERO") == "NÚMERO"    # não é número: texto
 
 
 def test_upsert_bd1_baixa_nula_no_wpd_nao_desfaz_baixa_existente():
@@ -274,6 +335,30 @@ def test_atualizar_records_bd1_por_remessa_atualiza_baixa_pago_e_calculados():
     assert ent[1] == '<x v="0"/>'
     outro = [b for b in blocos if b.startswith('<r><x v="1"/>')][0]
     assert _entradas(outro)[5] == '<x v="1"/>'    # record vizinho intocado
+
+
+def test_atualizar_records_bd1_atualiza_protocolo_vencimento_e_entrega():
+    """Os records do cache têm de acompanhar a planilha: sem isso a célula B
+    fica preenchida e o pivô continua jogando a remessa no branco."""
+    def_xml, rec_xml = _cache_bd1_sintetico()
+    cache = pc.CachePivot(def_xml, rec_xml)
+    dados = ie._converter_linha_wpd(_wpd_com_baixas().iloc[1])   # 146283 (R)
+    mudancas = [{"remessa_norm": "146283 (R)", "num_linha": 3,
+                 "dados": dados, "campos": ["Protocolo", "Vencimento", "Entrega"]}]
+    ie._atualizar_records_bd1(cache, mudancas, date(2026, 9, 9))
+
+    definicao, registros = cache.para_xml()
+    assert '<n v="17099679"/>' in definicao          # protocolo virou item
+    assert '<d v="2026-08-13T00:00:00"/>' in definicao   # vencimento do WPD
+    assert '<d v="2026-06-25T00:00:00"/>' in definicao   # entrega do WPD
+    blocos = re.findall(r'<r>.*?</r>', registros, re.S)
+    alvo = [b for b in blocos if b.startswith('<r><x v="1"/>')][0]
+    ent = _entradas(alvo)
+    assert ent[1] == '<x v="1"/>'    # Protocolo -> novo item numérico
+    assert ent[3] == '<x v="1"/>'    # Vencimento 13/08
+    assert ent[4] == '<x v="1"/>'    # Entrega 25/06
+    outro = [b for b in blocos if b.startswith('<r><x v="0"/>')][0]
+    assert _entradas(outro)[1] == '<x v="0"/>'    # record vizinho intocado
 
 
 def test_atualizar_records_bd1_falha_se_remessa_nao_localizada():

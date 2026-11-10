@@ -383,11 +383,17 @@ def test_upsert_bd1_celula_vazia_recebe_estilo_dominante_da_coluna():
         "% Glosa": [None], "Atraso": [None], "Faturas": [None],
     })
     xml_novo, mudancas, n = ie._upsert_bd1(xml, df, {"3"}, s)
-    assert n == 2  # só F (baixa) e I (faturado)
+    assert n == 4  # B e D (célula ausente) + F (baixa) e I (faturado)
     serial_baixa = (date(2026, 1, 5) - ie.SERIAL_EPOCA).days
+    serial_venc = (date(2026, 2, 1) - ie.SERIAL_EPOCA).days
     assert f'<c r="F3" s="56"><v>{serial_baixa}</v></c>' in xml_novo
     assert '<c r="I3" s="14"><v>9</v></c>' in xml_novo
-    assert mudancas[0]["campos"] == ["Baixa", "Faturado"]
+    # Protocolo/Vencimento criados na POSIÇÃO da coluna (B antes de D antes
+    # de F), com o estilo dominante da própria coluna
+    assert (f'<c r="A3" s="13"><v>3</v></c><c r="B3" s="0"><v>1</v></c>'
+            f'<c r="D3" s="0"><v>{serial_venc}</v></c>'
+            f'<c r="F3" s="56">') in xml_novo
+    assert mudancas[0]["campos"] == ["Protocolo", "Vencimento", "Baixa", "Faturado"]
 
 
 # ==============================================================================
@@ -804,7 +810,7 @@ def _criar_base(tmp_path, sem_dimension_bd2=False):
     + 2 timelines + 7 slicerCaches + pivôs com pivotFields posicionais.
     Escrito à mão porque o openpyxl 3.1.5 usa strings inline (o motor exige
     sharedStrings). Os caches/pivôs nascem COM refreshOnLoad="1" (estado do
-    template da nuvem) — a FASE 3c deve removê-lo.
+    template da nuvem) — a FASE 3c deve mantê-lo (recálculo ao abrir).
     sem_dimension_bd2=True gera uma BD2 sem <dimension> (fixture de falha)."""
     ser_ago = (date(2026, 8, 31) - ie.SERIAL_EPOCA).days
     ser_set = (date(2026, 9, 30) - ie.SERIAL_EPOCA).days
@@ -887,8 +893,15 @@ def _criar_base(tmp_path, sem_dimension_bd2=False):
     table2 = tabela(2, "Tabela1", "A1:J2", cabecalho_bd2[:9])
 
     # pivôs com pivotFields posicionais e refreshOnLoad="1" (estado do template
-    # da nuvem — a FASE 3c remove); cacheIds da investigação: pivôs 1–3 = 1
-    # (cache da BD1), pivô 4 = 0 (cache da BD2)
+    # da nuvem — a FASE 3c MANTÉM: recálculo ao abrir); cacheIds da
+    # investigação: pivôs 1–3 = 1 (cache da BD1), pivô 4 = 0 (cache da BD2).
+    # O pivô 4 nasce com o filtro de data forçado (como o real de 10/11).
+    filtro_p4 = ('<filters count="1"><filter fld="1" type="dateBetween" '
+                 'evalOrder="-1" id="2" name="Data"><autoFilter ref="A1">'
+                 '<filterColumn colId="0"><customFilters and="1">'
+                 '<customFilter operator="greaterThanOrEqual" val="46266"/>'
+                 '<customFilter operator="lessThanOrEqual" val="46295"/>'
+                 '</customFilters></filterColumn></autoFilter></filter></filters>')
     pivots = []
     for num, cache_id, campos in ((1, 1, _pivot_campos_bd1()),
                                   (2, 1, _pivot_campos_bd1()),
@@ -899,6 +912,7 @@ def _criar_base(tmp_path, sem_dimension_bd2=False):
                        + f'cacheId="{cache_id}" applyNumberFormats="0" refreshOnLoad="1">'
                        + '<location ref="A1:B5" firstHeaderRow="1"/>'
                        + f'<pivotFields count="{campos.count("<pivotField")}">{campos}</pivotFields>'
+                       + (filtro_p4 if num == 4 else "")
                        + '</pivotTableDefinition>'))
 
     # caches embutidos: def1 = BD2 (worksheetSource ref A1:I), def2 = BD1
@@ -982,6 +996,14 @@ def _criar_base(tmp_path, sem_dimension_bd2=False):
                  + '<pivotTables><pivotTable tabId="6" name="Data Vencimento"/></pivotTables>'
                  + '<state filterType="unknown" startDate="2024-01-01T00:00:00" '
                  + 'endDate="2027-01-01T00:00:00">'
+                 + '<bounds startDate="2024-01-01T00:00:00" endDate="2027-01-01T00:00:00"/>'
+                 + '</state></timelineCache>')
+    # linha do tempo do À Quitar (pivô 4) parada em setembro/2026, como no
+    # template real — a FASE 3c limpa a seleção (a aba do usuário não filtra)
+    timeline3 = (DECL + f'<timelineCache {ns9} {ns_r} sourceName="Data" name="NativeTimeline_Data">'
+                 + '<pivotTables><pivotTable tabId="8" name="Tabela dinâmica4"/></pivotTables>'
+                 + '<state minimalRefreshVersion="6" filterType="dateBetween">'
+                 + '<selection startDate="2026-09-01T00:00:00" endDate="2026-09-30T00:00:00"/>'
                  + '<bounds startDate="2024-01-01T00:00:00" endDate="2027-01-01T00:00:00"/>'
                  + '</state></timelineCache>')
 
@@ -1102,6 +1124,7 @@ def _criar_base(tmp_path, sem_dimension_bd2=False):
         "xl/pivotCache/_rels/pivotCacheDefinition2.xml.rels": rels_def(2),
         "xl/timelineCaches/timelineCache1.xml": timeline1,
         "xl/timelineCaches/timelineCache2.xml": timeline2,
+        "xl/timelineCaches/timelineCache3.xml": timeline3,
         **slicers,
         "xl/slicers/slicer1.xml": slicer_view,
         "customXml/item1.xml": "<preservar>BYTES</preservar>",
@@ -1230,13 +1253,14 @@ def test_processamento_completo(tmp_path):
         assert '<s v="Convênio Z"/>' in def1 and '<s v="Convênio Z "/>' not in def1
         assert '<s v="Convênio Novo"/>' in def1 and '<s v="Convênio Novo 2"/>' in def1
         assert rec1.count("<r>") == 3 and 'count="3"' in rec1
-        # refreshOnLoad removido dos caches e das pivôs
+        # refreshOnLoad MARCADO nos caches e nas pivôs: o Excel recalcula ao
+        # abrir (sem isso as abas saem com os números do último salvamento)
         for parte in ("xl/pivotCache/pivotCacheDefinition1.xml",
                       "xl/pivotCache/pivotCacheDefinition2.xml"):
-            assert "refreshOnLoad" not in zf.read(parte).decode("utf-8")
+            assert 'refreshOnLoad="1"' in zf.read(parte).decode("utf-8")
         for i in range(1, 5):
             p = zf.read(f"xl/pivotTables/pivotTable{i}.xml").decode("utf-8")
-            assert "refreshOnLoad" not in p
+            assert 'refreshOnLoad="1"' in p
 
         # timeline "Entrega" e slicer "Tipo de remessa" PRESERVADOS do arquivo
         # do usuário — sem janela de fechamento forçada e sem restrição "só
@@ -1265,10 +1289,17 @@ def test_processamento_completo(tmp_path):
             p = zf.read(f"xl/pivotTables/pivotTable{i}.xml").decode("utf-8")
             assert 'h="1"' not in p                 # h só na pivô 1 (como no real)
             assert '<item x="1" sd="0"/>' in p
-        # pivô 4 (À Quitar, cache BD2): convênios colapsados, datas visíveis
+        # pivô 4 (À Quitar, cache BD2): convênios colapsados, datas visíveis e
+        # o filtro de data forçado (setembro/2026) REMOVIDO
         p4 = zf.read("xl/pivotTables/pivotTable4.xml").decode("utf-8")
         assert '<item x="1" sd="0"/>' in p4
         assert '<item x="1"/>' in p4                # data nova visível
+        assert "<filters" not in p4 and "dateBetween" not in p4
+        # a linha do tempo do À Quitar perde a seleção (setembro/2026)
+        tl4 = zf.read("xl/timelineCaches/timelineCache3.xml").decode("utf-8")
+        assert 'filterType="unknown"' in tl4
+        assert "<selection" not in tl4
+        assert "<bounds" in tl4                    # o resto fica
 
 
 def test_processamento_aborta_se_dimension_bd2_faltar(tmp_path):
@@ -1316,7 +1347,7 @@ def test_limpo_none_integra_so_bd1(tmp_path):
         assert zb.read("xl/slicerCaches/slicerCache3.xml") == \
             zf.read("xl/slicerCaches/slicerCache3.xml")
         for i in range(1, 5):
-            assert "refreshOnLoad" not in zf.read(
+            assert 'refreshOnLoad="1"' in zf.read(
                 f"xl/pivotTables/pivotTable{i}.xml").decode("utf-8")
         # tabelas da BD2 sem alteração; a da BD1 cresceu
         assert 'ref="A1:J2"' in zf.read("xl/tables/table2.xml").decode("utf-8")

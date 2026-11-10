@@ -387,12 +387,90 @@ def test_colapsar_itens_pivot():
     assert '<item t="default"/>' in saida2      # default não tem x — intocado
 
 
-def test_remover_refresh_on_load_e_campo_tem_itens():
-    assert "refreshOnLoad" not in pc.remover_refresh_on_load(PIVOT)
+def test_mostrar_itens_pivot_devolve_o_item_oculto_a_conta():
+    """As abas Data Entrega/Data Vencimento escondiam o Protocolo (Em branco)
+    — h="1" tirava as remessas sem protocolo do subtotal do convênio."""
+    oculto = PIVOT.replace('<item m="1" x="2"/>', '<item m="1" x="2" h="1" sd="0"/>')
+    saida = pc.mostrar_itens_pivot(oculto, 2)
+    assert 'h="1"' not in saida
+    assert '<item m="1" x="2" sd="0"/>' in saida
+    assert '<pivotField axis="axisRow" showAll="1">' in saida
+    assert '<item t="default"/>' in saida          # default intocado
+    assert pc.mostrar_itens_pivot(saida, 2) == saida   # idempotente
+
+
+def test_mostrar_itens_pivot_sem_item_oculto_nao_mexe():
+    assert pc.mostrar_itens_pivot(PIVOT, 2) == PIVOT
+    assert pc.mostrar_itens_pivot(PIVOT, 0) == PIVOT   # campo auto-contido
+
+
+def test_campo_tem_itens():
     assert pc.campo_tem_itens(PIVOT, 1)
     assert not pc.campo_tem_itens(PIVOT, 0)
     with pytest.raises(RuntimeError):
         pc.campo_tem_itens(PIVOT, 9)
+
+
+def test_marcar_refresh_on_load_liga_o_recalculo_ao_abrir():
+    """Sem refreshOnLoad o arquivo entregue mostrava as células gravadas no
+    último salvamento em Excel — números velhos nas quatro abas."""
+    sem = PIVOT.replace(' refreshOnLoad="1"', "")
+    assert "refreshOnLoad" not in sem
+    saida = pc.marcar_refresh_on_load(sem)
+    assert 'refreshOnLoad="1"' in saida
+    assert saida.count("refreshOnLoad") == 1
+    assert pc.marcar_refresh_on_load(saida) == saida     # idempotente
+    # raiz auto-contida (<.../>) também recebe o atributo
+    auto = DECL + '<pivotCacheDefinition xmlns="x" recordCount="0"/>'
+    assert pc.marcar_refresh_on_load(auto).endswith(' refreshOnLoad="1"/>')
+
+
+def test_nome_do_pivot_e_parte_timeline_do_pivot():
+    assert pc.nome_do_pivot(PIVOT) == "Tabela dinâmica1"
+    assert pc.nome_do_pivot("<x/>") is None
+    partes = {
+        "xl/timelineCaches/timelineCache1.xml":
+            '<timelineCache><pivotTables><pivotTable tabId="3" '
+            'name="Data Entrega"/></pivotTables></timelineCache>',
+        "xl/timelineCaches/timelineCache2.xml":
+            '<timelineCache><pivotTables><pivotTable tabId="8" '
+            'name="Tabela &amp; dinâmica4"/></pivotTables></timelineCache>',
+    }
+    assert pc.parte_timeline_do_pivot(partes, "Data Entrega") == \
+        "xl/timelineCaches/timelineCache1.xml"
+    assert pc.parte_timeline_do_pivot(partes, "Tabela & dinâmica4") == \
+        "xl/timelineCaches/timelineCache2.xml"    # entidade XML decodificada
+    assert pc.parte_timeline_do_pivot(partes, "não existe") is None
+
+
+def test_limpar_selecao_timeline_volta_para_sem_filtro():
+    com = ('<timelineCacheDefinition name="NativeTimeline_Data">'
+           '<state minimalRefreshVersion="6" filterType="dateBetween">'
+           '<selection startDate="2026-09-01T00:00:00" '
+           'endDate="2026-09-30T00:00:00"/>'
+           '<bounds startDate="2024-01-01T00:00:00" '
+           'endDate="2027-01-01T00:00:00"/></state>'
+           '</timelineCacheDefinition>')
+    saida = pc.limpar_selecao_timeline(com)
+    assert 'filterType="unknown"' in saida
+    assert "<selection" not in saida
+    assert "<bounds" in saida                      # o resto fica
+    assert pc.limpar_selecao_timeline(saida) == saida
+
+
+def test_remover_filtros_pivot_tira_o_dateBetween_da_aba_a_quitar():
+    """O pivô À Quitar vinha filtrado em setembro/2026 (dateBetween
+    46266–46295); a aba do usuário não tem filtro — soma tudo."""
+    com_filtro = PIVOT.replace(
+        "</pivotTableDefinition>",
+        '<filters count="1"><filter fld="1" type="dateBetween" evalOrder="-1" '
+        'id="2" name="Data"><autoFilter ref="A1"/></filter></filters>'
+        "</pivotTableDefinition>")
+    saida = pc.remover_filtros_pivot(com_filtro)
+    assert "<filters" not in saida
+    assert "dateBetween" not in saida
+    assert "<pivotTableDefinition" in saida              # resto intocado
+    assert pc.remover_filtros_pivot(PIVOT) == PIVOT      # no-op sem filtro
 
 
 # ==============================================================================
