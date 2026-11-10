@@ -283,3 +283,85 @@ def test_migracao_separa_ponto_antigo_por_dono(tmp_path):
     assert len(banco.registros_ponto(conn, "leo")) == 1
     assert len(banco.registros_ponto(conn, "ana")) == 3
     conn.close()
+
+
+def test_mover_ponto_move_registros_e_uploads(tmp_path):
+    """10/11/2026: o ponto importado com o login errado pode ser reatribuído
+    por inteiro (dias + envios) para o dono correto."""
+    conn = _conn(tmp_path)
+    banco.salvar_importacao_ponto(
+        conn, "leo", "lameirao.xlsx",
+        [_registro(date(2026, 11, 3)), _registro(date(2026, 11, 4))],
+        date(2026, 11, 3), date(2026, 11, 4), [])
+    banco.salvar_registro_manual(conn, date(2026, 11, 5), "08:00", "17:00",
+                                 "trabalho", None, "leo")
+    resultado = banco.mover_ponto(conn, "leo", "lameirao")
+    assert resultado["registros"] == 3
+    assert resultado["uploads"] == 1
+    assert resultado["ignorados"] == []
+    assert banco.registros_ponto(conn, "leo") == []
+    assert [r["data"] for r in banco.registros_ponto(conn, "lameirao")] == \
+        [date(2026, 11, 3), date(2026, 11, 4), date(2026, 11, 5)]
+    assert [u["nome_arquivo"] for u in
+            banco.listar_uploads_ponto(conn, "lameirao")] == ["lameirao.xlsx"]
+    conn.close()
+
+
+def test_mover_ponto_destino_vence_e_origem_fica_vazia(tmp_path):
+    """Por padrão o destino vence: o dia repetido é preservado no destino e
+    removido da origem (a origem não fica com sobras); os demais dias vão
+    para o destino."""
+    conn = _conn(tmp_path)
+    banco.salvar_registro_manual(conn, date(2026, 11, 3), "08:00", "17:00",
+                                 "trabalho", None, "leo")
+    banco.salvar_registro_manual(conn, date(2026, 11, 4), "08:00", "17:00",
+                                 "trabalho", None, "leo")
+    banco.salvar_registro_manual(conn, date(2026, 11, 3), "10:00", "19:00",
+                                 "trabalho", None, "ana")
+    resultado = banco.mover_ponto(conn, "leo", "ana")
+    assert resultado["registros"] == 1
+    assert resultado["ignorados"] == ["2026-11-03"]
+    assert banco.registros_ponto(conn, "leo") == []  # origem esvaziada
+    ana = {r["data"]: r for r in banco.registros_ponto(conn, "ana")}
+    assert ana[date(2026, 11, 3)]["entrada"] == "10:00"  # destino preservado
+    assert ana[date(2026, 11, 4)]["entrada"] == "08:00"  # veio da origem
+    conn.close()
+
+
+def test_mover_ponto_sobrescreve_quando_pedido(tmp_path):
+    """Com sobrescrever=True o conteúdo da origem vence as datas repetidas."""
+    conn = _conn(tmp_path)
+    banco.salvar_registro_manual(conn, date(2026, 11, 3), "08:00", "17:00",
+                                 "trabalho", None, "leo")
+    banco.salvar_registro_manual(conn, date(2026, 11, 3), "10:00", "19:00",
+                                 "trabalho", None, "ana")
+    resultado = banco.mover_ponto(conn, "leo", "ana", sobrescrever=True)
+    assert resultado["sobrescritos"] == 1
+    assert resultado["ignorados"] == []
+    assert banco.registros_ponto(conn, "leo") == []
+    ana = banco.registros_ponto(conn, "ana")
+    assert len(ana) == 1 and ana[0]["entrada"] == "08:00"
+    conn.close()
+
+
+def test_mover_ponto_nao_toca_em_terceiros(tmp_path):
+    conn = _conn(tmp_path)
+    banco.salvar_registro_manual(conn, date(2026, 11, 3), "08:00", "17:00",
+                                 "trabalho", None, "leo")
+    banco.salvar_registro_manual(conn, date(2026, 11, 3), "10:00", "19:00",
+                                 "trabalho", None, "bia")
+    banco.mover_ponto(conn, "leo", "ana")
+    assert len(banco.registros_ponto(conn, "bia")) == 1
+    assert len(banco.registros_ponto(conn, "ana")) == 1
+    conn.close()
+
+
+def test_mover_ponto_exige_origem_e_destino_diferentes(tmp_path):
+    conn = _conn(tmp_path)
+    try:
+        banco.mover_ponto(conn, "leo", "leo")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("esperava ValueError")
+    conn.close()

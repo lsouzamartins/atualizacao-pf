@@ -633,6 +633,49 @@ def registros_ponto(conn, dono=None):
     } for linha in linhas]
 
 
+def mover_ponto(conn, origem, destino, sobrescrever=False):
+    """Move todos os dias e envios de ponto de um dono para outro.
+
+    Por padrão, uma data que já existe no destino é PRESERVADA e o dia
+    repetido é removido da origem (o destino vence — a origem fica vazia);
+    com sobrescrever=True, o conteúdo da origem substitui o do destino.
+    `ignorados` lista as datas que já existiam no destino. Devolve
+    {"registros": movidos, "uploads": movidos, "ignorados": [datas ISO],
+     "sobrescritos": n}.
+    """
+    if not origem or not destino:
+        raise ValueError("origem e destino são obrigatórios")
+    if origem == destino:
+        raise ValueError("origem e destino devem ser diferentes")
+    with conn:
+        datas_origem = [r["data"] for r in conn.execute(
+            "SELECT data FROM ponto_registros WHERE dono=? ORDER BY data",
+            (origem,))]
+        datas_destino = {r["data"] for r in conn.execute(
+            "SELECT data FROM ponto_registros WHERE dono=?", (destino,))}
+        conflitos = [d for d in datas_origem if d in datas_destino]
+        if conflitos:
+            if sobrescrever:
+                # a origem vence: o dia repetido do destino cede lugar
+                conn.executemany(
+                    "DELETE FROM ponto_registros WHERE dono=? AND data=?",
+                    [(destino, d) for d in conflitos])
+            else:
+                # o destino vence: o dia repetido sai da origem
+                conn.executemany(
+                    "DELETE FROM ponto_registros WHERE dono=? AND data=?",
+                    [(origem, d) for d in conflitos])
+        movidos = conn.execute(
+            "UPDATE ponto_registros SET dono=? WHERE dono=?",
+            (destino, origem)).rowcount
+        uploads = conn.execute(
+            "UPDATE ponto_uploads SET dono=? WHERE dono=?",
+            (destino, origem)).rowcount
+    return {"registros": movidos, "uploads": uploads,
+            "ignorados": conflitos if not sobrescrever else [],
+            "sobrescritos": len(conflitos) if sobrescrever else 0}
+
+
 def backup_banco(caminho, destino):
     origem = sqlite3.connect(caminho)
     alvo = sqlite3.connect(destino)

@@ -48,3 +48,12 @@ def test_admin_acessos_plataformas_inclui_ponto():
     """06/11: a tabela única de acessos ganhou a coluna Ponto."""
     assert "definir_acesso_ponto" in FONTE
     assert '"Ponto"' in FONTE
+
+
+def test_admin_mover_ponto_entre_usuarios():
+    """10/11/2026: o ponto importado com o login errado pode ser reatribuído
+    pela Administração, com backup do banco antes da alteração."""
+    assert "Mover ponto entre usuários" in FONTE
+    assert "banco.mover_ponto" in FONTE
+    assert "banco.backup_banco" in FONTE
+    assert "mover_ponto_flash" in FONTE

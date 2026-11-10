@@ -1,9 +1,12 @@
 """PÁGINA: ADMINISTRAÇÃO — só para admins: usuários, senhas, backup, fotos."""
 import os
+from datetime import datetime
+
 import streamlit as st
+
 import banco
 import fotos
-from ui_comum import icone, VERSAO, pastas
+from ui_comum import icone, VERSAO, pastas, formatar_data_br
 
 if not st.session_state.get("usuario", {}).get("admin"):
     st.error("Acesso restrito ao administrador.")
@@ -162,6 +165,81 @@ with st.form("foto_usuario", clear_on_submit=True):
             st.rerun()
         else:
             st.info(f"{alvo_foto} não tinha foto cadastrada.")
+
+st.markdown(f"#### {icone('arrow-left-right', 18)} Mover ponto entre usuários",
+            unsafe_allow_html=True)
+st.caption("Move todos os dias e envios de Controle de Ponto de um usuário "
+           "para outro. Datas que já existem no destino ficam com o conteúdo "
+           "do destino (o dia repetido sai da origem), salvo se você marcar "
+           "para sobrescrever com o conteúdo da origem. O banco é copiado "
+           "antes da alteração.")
+flash_ponto = st.session_state.pop("mover_ponto_flash", None)
+if flash_ponto:
+    st.success(flash_ponto)
+
+col_origem, col_destino = st.columns(2)
+origem_ponto = col_origem.selectbox("De (origem)", logins,
+                                    key="ponto_mover_de")
+destino_ponto = col_destino.selectbox("Para (destino)", logins,
+                                      key="ponto_mover_para")
+registros_origem = banco.registros_ponto(conn, origem_ponto)
+registros_destino = banco.registros_ponto(conn, destino_ponto)
+total_uploads = conn.execute(
+    "SELECT COUNT(*) FROM ponto_uploads WHERE dono=?",
+    (origem_ponto,)).fetchone()[0]
+conflitos = sorted(r["data"] for r in registros_origem
+                   if r["data"] in {d["data"] for d in registros_destino})
+st.write(f"**{origem_ponto}**: {len(registros_origem)} dia(s) e "
+         f"{total_uploads} envio(s) de planilha.")
+ultimos_uploads = banco.listar_uploads_ponto(conn, origem_ponto, limite=5)
+if ultimos_uploads:
+    st.caption("Envios: " + " · ".join(
+        f"{u['nome_arquivo']} ({formatar_data_br(u['periodo_de'])} a "
+        f"{formatar_data_br(u['periodo_ate'])})" for u in ultimos_uploads))
+sobrescrever_ponto = False
+if conflitos:
+    amostra = ", ".join(formatar_data_br(d.isoformat()) for d in conflitos[:10])
+    if len(conflitos) > 10:
+        amostra += f" … (+{len(conflitos) - 10})"
+    st.warning(f"{len(conflitos)} data(s) já existem em {destino_ponto} e "
+               f"ficarão com o conteúdo do destino (o dia repetido sai de "
+               f"{origem_ponto}): {amostra}. "
+               "Marque abaixo para sobrescrever o destino com o conteúdo "
+               "da origem.")
+    sobrescrever_ponto = st.checkbox(
+        "Sobrescrever as datas repetidas com o conteúdo da origem",
+        key=f"ponto_mover_sobrescrever_{origem_ponto}_{destino_ponto}")
+confirmar_mover = st.checkbox(
+    f"Confirmo mover o ponto de {origem_ponto} para {destino_ponto}",
+    key=f"ponto_mover_confirmar_{origem_ponto}_{destino_ponto}")
+if st.button("Mover ponto", type="primary", key="ponto_mover_botao"):
+    if origem_ponto == destino_ponto:
+        st.error("Escolha usuários diferentes para origem e destino.")
+    elif not confirmar_mover:
+        st.warning("Marque a confirmação para mover o ponto.")
+    else:
+        try:
+            pasta_backup = os.path.join(
+                os.path.dirname(banco.CAMINHO_PADRAO), "backups")
+            os.makedirs(pasta_backup, exist_ok=True)
+            caminho_backup = os.path.join(
+                pasta_backup,
+                f"pf-antes-mover-ponto-{datetime.now():%Y%m%d-%H%M%S}.db")
+            banco.backup_banco(banco.CAMINHO_PADRAO, caminho_backup)
+            resultado = banco.mover_ponto(
+                conn, origem_ponto, destino_ponto,
+                sobrescrever=sobrescrever_ponto)
+        except Exception as erro:
+            st.error(f"Não foi possível mover o ponto: {erro}")
+        else:
+            texto = (f"Movidos {resultado['registros']} dia(s) e "
+                     f"{resultado['uploads']} envio(s) de {origem_ponto} "
+                     f"para {destino_ponto}. Backup: {caminho_backup}")
+            if resultado["ignorados"]:
+                texto += (f" {len(resultado['ignorados'])} data(s) repetida(s) "
+                          "ficaram com o conteúdo do destino.")
+            st.session_state["mover_ponto_flash"] = texto
+            st.rerun()
 
 st.markdown("#### Backup do banco")
 if st.button("Baixar backup (.db)"):
