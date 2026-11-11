@@ -580,6 +580,44 @@ def salvar_registro_manual(conn, data, entrada, saida, tipo, observacao,
     conn.commit()
 
 
+def salvar_periodo_manual(conn, dias, tipo, observacao, usuario, dono=None,
+                          substituir=False, agora=None):
+    """Cria/atualiza vários dias de uma vez (ex.: o mês de férias).
+
+    Dias que já têm registro são PRESERVADOS, salvo substituir=True, caso em
+    que o período vence (entrada/saída ficam nulas). Devolve
+    {"criados": n, "substituidos": n, "preservados": n}.
+    """
+    dono = dono or usuario
+    agora = agora or datetime.now().isoformat()
+    dias = list(dias)
+    criados = substituidos = preservados = 0
+    with conn:
+        existentes = {r["data"] for r in conn.execute(
+            "SELECT data FROM ponto_registros WHERE dono=?", (dono,))}
+        for dia in dias:
+            iso = dia.isoformat() if hasattr(dia, "isoformat") else str(dia)
+            if iso in existentes:
+                if not substituir:
+                    preservados += 1
+                    continue
+                substituidos += 1
+            else:
+                criados += 1
+            conn.execute(
+                "INSERT INTO ponto_registros (upload_id, dono, data, entrada, "
+                "saida, tipo, observacao, origem, atualizado_em, atualizado_por) "
+                "VALUES (NULL, ?, ?, NULL, NULL, ?, ?, 'manual', ?, ?) "
+                "ON CONFLICT(dono, data) DO UPDATE SET "
+                "upload_id=NULL, entrada=NULL, saida=NULL, "
+                "tipo=excluded.tipo, observacao=excluded.observacao, "
+                "origem='manual', atualizado_em=excluded.atualizado_em, "
+                "atualizado_por=excluded.atualizado_por",
+                (dono, iso, tipo, observacao, agora, usuario))
+    return {"criados": criados, "substituidos": substituidos,
+            "preservados": preservados}
+
+
 def excluir_registro_ponto(conn, dono, data):
     """Remove o dia do dono; devolve o número de linhas apagadas."""
     data_iso = data.isoformat() if hasattr(data, "isoformat") else str(data)

@@ -9,6 +9,14 @@ RAIZ = Path(__file__).resolve().parents[1]
 FONTE = (RAIZ / "app_pages" / "ponto.py").read_text(encoding="utf-8")
 
 
+def _escolher_data(at, chave, dia, mes, ano):
+    """Preenche os três seletores de data em português."""
+    at.selectbox(key=f"{chave}_dia").set_value(dia)
+    at.selectbox(key=f"{chave}_mes").set_value(mes)
+    at.selectbox(key=f"{chave}_ano").set_value(ano)
+    at.run()
+
+
 def _app(tmp_path, monkeypatch, usuario=None, registros=(), usuarios=()):
     caminho = str(tmp_path / "pf.db")
     monkeypatch.setattr(banco, "CAMINHO_PADRAO", caminho)
@@ -86,13 +94,11 @@ def test_trocar_data_reseta_confirmacao_de_exclusao(tmp_path, monkeypatch):
     ])
     at.run()
     assert not at.exception
-    at.date_input(key="ponto_form_data").set_value(date(2026, 11, 3))
-    at.run()
+    _escolher_data(at, "ponto_form_data", 3, "Novembro", 2026)
     at.checkbox(key="ponto_excluir_confirmar").check()
     at.run()
     assert at.checkbox(key="ponto_excluir_confirmar").value is True
-    at.date_input(key="ponto_form_data").set_value(date(2026, 11, 4))
-    at.run()
+    _escolher_data(at, "ponto_form_data", 4, "Novembro", 2026)
     assert not at.exception
     assert at.checkbox(key="ponto_excluir_confirmar").value is False
 
@@ -106,8 +112,7 @@ def test_salvar_dia_especial_zera_horarios_do_formulario(tmp_path, monkeypatch):
     ])
     at.run()
     assert not at.exception
-    at.date_input(key="ponto_form_data").set_value(date(2026, 11, 3))
-    at.run()
+    _escolher_data(at, "ponto_form_data", 3, "Novembro", 2026)
     # O sync carregou os horários do banco para os time_inputs.
     assert at.time_input(key="ponto_form_entrada").value == time(8, 0)
     at.selectbox(key="ponto_form_tipo").select("Férias")
@@ -211,8 +216,7 @@ def test_admin_salva_dia_no_ponto_da_pessoa_escolhida(tmp_path, monkeypatch):
     at.run()
     at.selectbox(key="ponto_pessoa").set_value("ana")
     at.run()
-    at.date_input(key="ponto_form_data").set_value(date(2026, 11, 3))
-    at.run()
+    _escolher_data(at, "ponto_form_data", 3, "Novembro", 2026)
     at.time_input(key="ponto_form_entrada").set_value(time(8, 0))
     at.time_input(key="ponto_form_saida").set_value(time(17, 0))
     at.run()
@@ -233,3 +237,32 @@ def test_fonte_importa_e_edita_no_dono_exibido():
     assert "banco.listar_uploads_ponto(conn, dono, limite=20)" in FONTE
     assert "sobrescrever_manuais=sobrescrever, dono=dono" in FONTE
     assert "banco.excluir_registro_ponto(conn, dono, dia)" in FONTE
+
+
+def test_fonte_tem_seletores_de_data_em_portugues():
+    """10/11/2026 (a pedido): o calendário do st.date_input é fixo em inglês;
+    a página passou a usar Dia/Mês/Ano com os meses em português."""
+    assert "MESES_NOMES" in FONTE
+    for mes in ("Janeiro", "Fevereiro", "Março", "Dezembro"):
+        assert mes in FONTE
+    assert "st.date_input(" not in FONTE
+
+
+def test_lancar_periodo_marca_dias_uteis_de_ferias(tmp_path, monkeypatch):
+    """10/11/2026: o mês de férias é lançado de uma vez, só nos dias úteis."""
+    at = _app(tmp_path, monkeypatch)
+    at.run()
+    assert not at.exception
+    _escolher_data(at, "ponto_periodo_de", 1, "Novembro", 2026)
+    _escolher_data(at, "ponto_periodo_ate", 30, "Novembro", 2026)
+    next(b for b in at.button if b.label == "Lançar período").click()
+    at.run()
+    assert not at.exception
+    conn = banco.conectar(str(tmp_path / "pf.db"))
+    try:
+        registros = banco.registros_ponto(conn, "leo")
+    finally:
+        conn.close()
+    assert len(registros) == 21  # dias úteis de novembro/2026
+    assert all(r["tipo"] == "ferias" for r in registros)
+    assert all(r["data"].weekday() < 5 for r in registros)

@@ -365,3 +365,62 @@ def test_mover_ponto_exige_origem_e_destino_diferentes(tmp_path):
     else:
         raise AssertionError("esperava ValueError")
     conn.close()
+
+
+def test_salvar_periodo_manual_cria_dias_especiais(tmp_path):
+    """10/11/2026: o mês de férias pode ser lançado de uma vez, sem horário."""
+    conn = _conn(tmp_path)
+    dias = [date(2026, 11, 2), date(2026, 11, 3), date(2026, 11, 4)]
+    resultado = banco.salvar_periodo_manual(
+        conn, dias, "ferias", "Férias de novembro", "leo")
+    assert resultado == {"criados": 3, "substituidos": 0, "preservados": 0}
+    registros = banco.registros_ponto(conn, "leo")
+    assert [r["data"] for r in registros] == dias
+    assert all(r["tipo"] == "ferias" for r in registros)
+    assert all(r["entrada"] is None and r["saida"] is None
+               for r in registros)
+    assert all(r["origem"] == "manual" for r in registros)
+    assert all(r["observacao"] == "Férias de novembro" for r in registros)
+    conn.close()
+
+
+def test_salvar_periodo_manual_preserva_registros_existentes(tmp_path):
+    """Por padrão, dia que já tem registro fica como está."""
+    conn = _conn(tmp_path)
+    banco.salvar_registro_manual(conn, date(2026, 11, 3), "08:00", "17:00",
+                                 "trabalho", None, "leo")
+    resultado = banco.salvar_periodo_manual(
+        conn, [date(2026, 11, 2), date(2026, 11, 3)], "ferias", None, "leo")
+    assert resultado == {"criados": 1, "substituidos": 0, "preservados": 1}
+    registros = {r["data"]: r for r in banco.registros_ponto(conn, "leo")}
+    assert registros[date(2026, 11, 3)]["tipo"] == "trabalho"
+    assert registros[date(2026, 11, 3)]["entrada"] == "08:00"
+    assert registros[date(2026, 11, 2)]["tipo"] == "ferias"
+    conn.close()
+
+
+def test_salvar_periodo_manual_substitui_quando_pedido(tmp_path):
+    """Com substituir=True o período vence os dias que já têm registro."""
+    conn = _conn(tmp_path)
+    banco.salvar_registro_manual(conn, date(2026, 11, 3), "08:00", "17:00",
+                                 "trabalho", None, "leo")
+    resultado = banco.salvar_periodo_manual(
+        conn, [date(2026, 11, 2), date(2026, 11, 3)], "ferias", None,
+        "leo", substituir=True)
+    assert resultado == {"criados": 1, "substituidos": 1, "preservados": 0}
+    registros = {r["data"]: r for r in banco.registros_ponto(conn, "leo")}
+    assert registros[date(2026, 11, 3)]["tipo"] == "ferias"
+    assert registros[date(2026, 11, 3)]["entrada"] is None
+    assert registros[date(2026, 11, 2)]["tipo"] == "ferias"
+    conn.close()
+
+
+def test_salvar_periodo_manual_nao_toca_em_terceiros(tmp_path):
+    conn = _conn(tmp_path)
+    banco.salvar_registro_manual(conn, date(2026, 11, 3), "08:00", "17:00",
+                                 "trabalho", None, "ana")
+    banco.salvar_periodo_manual(
+        conn, [date(2026, 11, 2), date(2026, 11, 3)], "ferias", None, "leo")
+    assert banco.registros_ponto(conn, "ana")[0]["tipo"] == "trabalho"
+    assert len(banco.registros_ponto(conn, "leo")) == 2
+    conn.close()

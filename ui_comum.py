@@ -15,7 +15,7 @@ import streamlit as st
 from core import obter_pasta_raiz, garantir_pastas
 
 
-VERSAO = "Desenvolvedor: Leonardo Martins · Revisado por Claude Code (Anthropic) · V 9.2026.1110 · Streamlit + Lucide"
+VERSAO = "Desenvolvedor: Leonardo Martins · Revisado por Claude Code (Anthropic) · V 10.2026.1110 · Streamlit + Lucide"
 
 # ---------------------------------------------------------------------------
 # CAMINHOS PRINCIPAIS

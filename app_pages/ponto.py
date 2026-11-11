@@ -1,4 +1,5 @@
 """PÁGINA: PONTO — banco de horas pessoal (dashboard e lançamento manual)."""
+import calendar
 from collections import Counter
 from datetime import date, time, timedelta
 from html import escape
@@ -11,8 +12,9 @@ import banco
 import ponto_core
 from ui_comum import VERSAO, formatar_data_br, formatar_data_hora_br, icone
 
-MESES = ["jan", "fev", "mar", "abr", "mai", "jun",
-         "jul", "ago", "set", "out", "nov", "dez"]
+MESES_NOMES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+               "Julho", "Agosto", "Setembro", "Outubro", "Novembro",
+               "Dezembro"]
 DIAS_SEMANA = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
 ROTULOS_PARA_TIPO = {"Trabalho": "trabalho", "Férias": "ferias",
                      "Feriado": "feriado", "Atestado": "atestado"}
@@ -39,7 +41,7 @@ def _mes_clave(dia):
 
 def _mes_rotulo(chave):
     ano, mes = chave.split("-")
-    return f"{MESES[int(mes) - 1]}/{ano}"
+    return f"{MESES_NOMES[int(mes) - 1]}/{ano}"
 
 
 def _periodo_da_chave(chave):
@@ -96,6 +98,40 @@ def _hora_de(texto):
         return None
     horas, minutos = texto.split(":")
     return time(int(horas), int(minutos))
+
+
+def _anos_disponiveis(registros, hoje):
+    """Anos oferecidos no seletor: em volta de hoje e os que já têm ponto."""
+    anos = {hoje.year - 1, hoje.year, hoje.year + 1}
+    anos.update(r["data"].year for r in registros)
+    return sorted(anos)
+
+
+def _seletor_data(rotulo, chave, valor, anos):
+    """Data em Dia/Mês/Ano em português.
+
+    O calendário do st.date_input é fixo em inglês (verificado no Streamlit
+    1.60), então a página usa seletores próprios. Devolve a data escolhida ou
+    None quando o dia não existe no mês/ano.
+    """
+    if rotulo:
+        st.caption(rotulo)
+    coluna_dia, coluna_mes, coluna_ano = st.columns([1, 1.6, 1])
+    dia = coluna_dia.selectbox("Dia", list(range(1, 32)),
+                               index=valor.day - 1, key=f"{chave}_dia")
+    nome_mes = coluna_mes.selectbox("Mês", MESES_NOMES,
+                                    index=valor.month - 1,
+                                    key=f"{chave}_mes")
+    if valor.year not in anos:
+        anos = sorted(set(anos) | {valor.year})
+    ano = coluna_ano.selectbox("Ano", anos, index=anos.index(valor.year),
+                               key=f"{chave}_ano")
+    mes = MESES_NOMES.index(nome_mes) + 1
+    if dia > calendar.monthrange(ano, mes)[1]:
+        st.error(f"Dia {dia} não existe em {nome_mes} de {ano}. "
+                 "Escolha um dia válido.")
+        return None
+    return date(ano, mes, dia)
 
 
 def _linhas_tabela(dias, de, ate):
@@ -423,6 +459,72 @@ def _dono_do_ponto(usuario):
         format_func=lambda login: _rotulo_pessoa(login, nomes.get(login)))
 
 
+def _lancar_periodo(mapa, anos, hoje, usuario, dono):
+    """Lança vários dias de uma vez (ex.: o mês inteiro de férias)."""
+    st.markdown("**Lançar um período**")
+    st.caption("Marca vários dias de uma vez — por exemplo, o mês inteiro "
+               "de férias.")
+    primeiro = date(hoje.year, hoje.month, 1)
+    ultimo = date(hoje.year, hoje.month,
+                  calendar.monthrange(hoje.year, hoje.month)[1])
+    de_periodo = _seletor_data("De", "ponto_periodo_de", primeiro, anos)
+    ate_periodo = _seletor_data("Até", "ponto_periodo_ate", ultimo, anos)
+    rotulo_periodo = st.selectbox(
+        "Situação do período", ["Férias", "Feriado", "Atestado"],
+        key="ponto_periodo_tipo")
+    somente_uteis = st.checkbox(
+        "Somente dias úteis (segunda a sexta)", value=True,
+        key="ponto_periodo_uteis")
+    substituir = st.checkbox(
+        "Substituir os dias que já têm registro",
+        key="ponto_periodo_substituir")
+    if de_periodo is None or ate_periodo is None:
+        return
+    if de_periodo > ate_periodo:
+        st.warning("A data inicial deve ser anterior ou igual à data final.")
+        return
+    dias_periodo = []
+    cursor = de_periodo
+    while cursor <= ate_periodo:
+        if not somente_uteis or cursor.weekday() < 5:
+            dias_periodo.append(cursor)
+        cursor += timedelta(days=1)
+    if not dias_periodo:
+        st.info("Nenhum dia no intervalo com os filtros escolhidos.")
+        return
+    existentes = sum(1 for dia in dias_periodo if dia in mapa)
+    texto = (f"{len(dias_periodo)} dia(s) de "
+             f"{formatar_data_br(de_periodo.isoformat())} a "
+             f"{formatar_data_br(ate_periodo.isoformat())} como "
+             f"{rotulo_periodo}.")
+    if existentes:
+        if substituir:
+            texto += (f" {existentes} dia(s) com registro serão "
+                      "substituídos.")
+        else:
+            texto += f" {existentes} dia(s) com registro serão preservados."
+    else:
+        texto += " Nenhum deles tem registro ainda."
+    st.caption(texto)
+    if st.button("Lançar período", type="primary", key="ponto_lancar_periodo"):
+        conn = _conexao()
+        try:
+            banco.inicializar_banco(conn)
+            resultado = banco.salvar_periodo_manual(
+                conn, dias_periodo, ROTULOS_PARA_TIPO[rotulo_periodo], None,
+                usuario["login"], dono=dono, substituir=substituir)
+        finally:
+            conn.close()
+        mensagem = (f"{resultado['criados']} dia(s) lançado(s) como "
+                    f"{rotulo_periodo}.")
+        if resultado["substituidos"]:
+            mensagem += f" {resultado['substituidos']} substituído(s)."
+        if resultado["preservados"]:
+            mensagem += f" {resultado['preservados']} preservado(s)."
+        _flash(mensagem)
+        st.rerun()
+
+
 usuario = st.session_state.get("usuario", {})
 if not (usuario.get("admin") or usuario.get("acesso_ponto")):
     st.error("Acesso restrito ao Controle de Ponto.")
@@ -497,52 +599,64 @@ else:
 
 with st.expander("Lançar/editar ponto", expanded=not registros):
     mapa = {r["data"]: r for r in registros}
-    data_escolhida = st.date_input("Data", value=date.today(),
-                                   format="DD/MM/YYYY", key="ponto_form_data")
-    if st.session_state.get("ponto_form_data_anterior") != data_escolhida:
-        registro = mapa.get(data_escolhida) or {}
-        st.session_state["ponto_form_tipo"] = TIPOS_PARA_ROTULO.get(
-            registro.get("tipo", "trabalho"), "Trabalho")
-        st.session_state["ponto_form_entrada"] = _hora_de(registro.get("entrada"))
-        st.session_state["ponto_form_saida"] = _hora_de(registro.get("saida"))
-        st.session_state["ponto_form_obs"] = registro.get("observacao") or ""
-        # Sem esta limpeza, um "Confirmo excluir" marcado na data anterior
-        # continuaria valendo para a nova data selecionada.
-        st.session_state.pop("ponto_excluir_confirmar", None)
-        st.session_state["ponto_form_data_anterior"] = data_escolhida
-    if uploads:
-        periodo_de_importado = date.fromisoformat(uploads[0]["periodo_de"])
-        periodo_ate_importado = date.fromisoformat(uploads[0]["periodo_ate"])
-        if not (periodo_de_importado <= data_escolhida <= periodo_ate_importado):
-            st.warning("Esta data está fora do período da última planilha "
-                       "importada. O lançamento é permitido.")
-    # Fora do form: dentro dele os widgets só atualizam ao clicar em Enviar,
-    # e o horário precisa desabilitar no mesmo instante em que a situação muda.
-    rotulo_tipo = st.selectbox("Situação", list(ROTULOS_PARA_TIPO),
-                               key="ponto_form_tipo")
-    with st.form("ponto_manual"):
-        entrada = st.time_input("Entrada", key="ponto_form_entrada", step=60,
-                                disabled=rotulo_tipo != "Trabalho")
-        saida = st.time_input("Saída", key="ponto_form_saida", step=60,
-                              disabled=rotulo_tipo != "Trabalho")
-        observacao = st.text_input("Observação", key="ponto_form_obs")
-        salvar = st.form_submit_button("Salvar", type="primary")
-    if salvar:
-        tipo = ROTULOS_PARA_TIPO[rotulo_tipo]
-        if tipo == "trabalho" and entrada is None and saida is None:
-            st.error("Informe a entrada e/ou a saída do dia.")
-        elif (tipo == "trabalho" and entrada is not None and saida is not None
-              and saida <= entrada):
-            st.error("A saída deve ser maior que a entrada.")
-        else:
-            _salvar_manual(data_escolhida, tipo, entrada, saida, observacao,
-                           usuario["login"], dono)
-    confirmar = st.checkbox("Confirmo excluir o dia selecionado",
-                            key="ponto_excluir_confirmar",
-                            disabled=data_escolhida not in mapa)
-    if st.button("Excluir dia",
-                 disabled=not confirmar or data_escolhida not in mapa):
-        _excluir(data_escolhida, dono)
+    anos = _anos_disponiveis(registros, hoje)
+    data_escolhida = _seletor_data("Data", "ponto_form_data", hoje, anos)
+    if data_escolhida is None:
+        st.caption("O lançamento de um dia fica disponível quando a data "
+                   "for válida.")
+    else:
+        if st.session_state.get("ponto_form_data_anterior") != data_escolhida:
+            registro = mapa.get(data_escolhida) or {}
+            st.session_state["ponto_form_tipo"] = TIPOS_PARA_ROTULO.get(
+                registro.get("tipo", "trabalho"), "Trabalho")
+            st.session_state["ponto_form_entrada"] = _hora_de(
+                registro.get("entrada"))
+            st.session_state["ponto_form_saida"] = _hora_de(
+                registro.get("saida"))
+            st.session_state["ponto_form_obs"] = (
+                registro.get("observacao") or "")
+            # Sem esta limpeza, um "Confirmo excluir" marcado na data anterior
+            # continuaria valendo para a nova data selecionada.
+            st.session_state.pop("ponto_excluir_confirmar", None)
+            st.session_state["ponto_form_data_anterior"] = data_escolhida
+        if uploads:
+            periodo_de_importado = date.fromisoformat(uploads[0]["periodo_de"])
+            periodo_ate_importado = date.fromisoformat(
+                uploads[0]["periodo_ate"])
+            if not (periodo_de_importado <= data_escolhida
+                    <= periodo_ate_importado):
+                st.warning("Esta data está fora do período da última planilha "
+                           "importada. O lançamento é permitido.")
+        # Fora do form: dentro dele os widgets só atualizam ao clicar em
+        # Enviar, e o horário precisa desabilitar no mesmo instante em que a
+        # situação muda.
+        rotulo_tipo = st.selectbox("Situação", list(ROTULOS_PARA_TIPO),
+                                   key="ponto_form_tipo")
+        with st.form("ponto_manual"):
+            entrada = st.time_input("Entrada", key="ponto_form_entrada",
+                                    step=60, disabled=rotulo_tipo != "Trabalho")
+            saida = st.time_input("Saída", key="ponto_form_saida", step=60,
+                                  disabled=rotulo_tipo != "Trabalho")
+            observacao = st.text_input("Observação", key="ponto_form_obs")
+            salvar = st.form_submit_button("Salvar", type="primary")
+        if salvar:
+            tipo = ROTULOS_PARA_TIPO[rotulo_tipo]
+            if tipo == "trabalho" and entrada is None and saida is None:
+                st.error("Informe a entrada e/ou a saída do dia.")
+            elif (tipo == "trabalho" and entrada is not None
+                  and saida is not None and saida <= entrada):
+                st.error("A saída deve ser maior que a entrada.")
+            else:
+                _salvar_manual(data_escolhida, tipo, entrada, saida,
+                               observacao, usuario["login"], dono)
+        confirmar = st.checkbox("Confirmo excluir o dia selecionado",
+                                key="ponto_excluir_confirmar",
+                                disabled=data_escolhida not in mapa)
+        if st.button("Excluir dia",
+                     disabled=not confirmar or data_escolhida not in mapa):
+            _excluir(data_escolhida, dono)
+    st.divider()
+    _lancar_periodo(mapa, anos, hoje, usuario, dono)
 
 if registros:
     linhas = _linhas_tabela(dias, de, ate)

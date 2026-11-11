@@ -7,7 +7,7 @@ def test_versao_rodape_padronizado():
     rodada de publicação (atual: pente fino de 12/10). O rodapé do login usa
     o MESMO texto, via ui_comum.VERSAO."""
     assert ui_comum.VERSAO == ("Desenvolvedor: Leonardo Martins · Revisado por "
-                               "Claude Code (Anthropic) · V 9.2026.1110 · "
+                               "Claude Code (Anthropic) · V 10.2026.1110 · "
                                "Streamlit + Lucide")
 
 
