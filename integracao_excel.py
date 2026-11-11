@@ -1235,6 +1235,178 @@ def _editar_bd2(xml_bd2: str, bloco: list[dict] | None, strings) -> tuple[str | 
     return texto, novo_fim, novas_celulas, mapeamento, novas, atualizacoes
 
 
+def _num_celula(corpo: str, letra: str, num: int, strings) -> float | None:
+    """Valor numérico de uma célula da BD2. Strings compartilhadas históricas
+    (só espaços) contam como 0 — é o "sem valor" da planilha."""
+    m = re.search(rf'<c r="{letra}{num}"([^>]*?)(?:/>|>(.*?)</c>)', corpo,
+                  flags=re.DOTALL)
+    if m is None:
+        return None
+    attrs, interno = m.group(1), m.group(2) or ""
+    v = re.search(r"<v>([^<]*)</v>", interno)
+    if v is None:
+        return None
+    if 't="s"' in attrs:
+        try:
+            texto = strings.texto_de_indice(int(v.group(1)))
+        except (IndexError, ValueError):
+            return None
+        texto = texto.strip()
+        if not texto:
+            return 0.0
+        try:
+            return float(texto.replace(",", "."))
+        except ValueError:
+            return None
+    try:
+        return float(v.group(1))
+    except ValueError:
+        return None
+
+
+def _convenio_bd2(corpo: str, num: int, strings) -> str | None:
+    """Convênio da linha da BD2 (sem padding): shared string ou texto inline."""
+    m = re.search(rf'<c r="A{num}"([^>]*?)(?:/>|>(.*?)</c>)', corpo,
+                  flags=re.DOTALL)
+    if m is None:
+        return None
+    attrs, interno = m.group(1), m.group(2) or ""
+    if 't="s"' in attrs:
+        v = re.search(r"<v>([^<]*)</v>", interno)
+        if v is None:
+            return None
+        try:
+            return strings.texto_de_indice(int(v.group(1))).strip()
+        except (IndexError, ValueError):
+            return None
+    t = re.search(r"<t[^>]*>(.*?)</t>", interno, re.DOTALL)
+    return t.group(1).strip() if t else None
+
+
+def _remover_orfaos_bd2(xml_bd2: str, bloco: list[dict] | None, strings,
+                        ) -> tuple[str, int, list[dict]] | None:
+    """Remove da BD2 a linha órfã de reclassificação de convênio (11/11/2026).
+
+    A BD2 é upsert por (Convênio, Data): quando o faturamento lança o depósito
+    no convênio errado e corrige depois, a chave nova é anexada e a antiga fica
+    para sempre (BRADESCO SEGUROS 04/11/2026, R$ 1.637,71, ao lado da
+    BRADESCO OPERADORA PLANO correta). A regra exige TODAS as condições:
+    Não Identificado > 0; Quitação vazia/0 (depósito nunca casado); data
+    dentro do período que o NI cobre (menor..maior data do bloco); chave
+    (Convênio, Data) ausente do NI do dia; e contrapartida no mesmo dia — outra
+    linha da BD2 (ou o próprio NI) com Quitação igual ao valor do órfão, prova
+    de que o dinheiro foi reclassificado para o convênio certo. Sem a
+    contrapartida a linha FICA e o processamento registra o aviso.
+
+    Renumera as rows seguintes e a dimension. Retorna (xml_novo, fim_novo,
+    removidas) com removidas[{linha, convenio, data, valor}] ou None.
+    """
+    if not bloco:
+        return None
+    datas = [b["data"] for b in bloco if b.get("data") is not None]
+    if not datas:
+        return None
+    menor, maior = min(datas), max(datas)
+    chaves_ni = {(b["convenio"].strip(), str(b["data"])) for b in bloco}
+
+    linhas: list[dict] = []
+    for m in re.finditer(r'<row r="(\d+)"([^>]*)>(.*?)</row>', xml_bd2,
+                         flags=re.DOTALL):
+        num = int(m.group(1))
+        if num < 2:
+            continue
+        corpo = m.group(3)
+        convenio = _convenio_bd2(corpo, num, strings)
+        cb = re.search(rf'<c r="B{num}"[^>]*?><v>([^<]*)</v></c>', corpo)
+        if convenio is None or cb is None:
+            continue
+        serial_bruto = cb.group(1)  # mesma forma da chave de _editar_bd2
+        try:
+            serial = int(float(serial_bruto))
+        except ValueError:
+            continue
+        linhas.append({
+            "num": num,
+            "convenio": convenio,
+            "serial": serial,
+            "serial_bruto": serial_bruto,
+            "quitacao": _num_celula(corpo, "E", num, strings),
+            "nao_id": _num_celula(corpo, "F", num, strings),
+        })
+
+    def _perto(a, b) -> bool:
+        return a is not None and b is not None and abs(a - b) <= 0.005
+
+    alvos: list[dict] = []
+    for r in linhas:
+        if r["nao_id"] is None or r["nao_id"] <= 0.005:
+            continue
+        if r["quitacao"] is not None and abs(r["quitacao"]) > 0.005:
+            continue
+        if not (menor <= r["serial"] <= maior):
+            continue
+        if (r["convenio"], r["serial_bruto"]) in chaves_ni:
+            continue
+        # contrapartida na BD2 (linha já quitada com o mesmo valor e dia)...
+        contrapartida = any(
+            o["num"] != r["num"] and o["serial"] == r["serial"]
+            and _perto(o["quitacao"], r["nao_id"])
+            for o in linhas)
+        # ...ou no próprio NI (a linha corrigida chegando nesta execução)
+        if not contrapartida:
+            contrapartida = any(
+                b["data"] == r["serial"]
+                and _perto(b["valores"][2] if len(b["valores"]) > 2 else None,
+                           r["nao_id"])
+                for b in bloco)
+        if not contrapartida:
+            data_txt = (SERIAL_EPOCA
+                        + timedelta(days=r["serial"])).strftime("%d/%m/%Y")
+            print(f"[FASE 3] BD2: linha órfã sem contrapartida — "
+                  f"{r['convenio']} {data_txt} R$ {r['nao_id']:,.2f} "
+                  f"(mantida; confira no Manual)")
+            continue
+        alvos.append(r)
+    if not alvos:
+        return None
+
+    nums = {r["num"] for r in alvos}
+
+    def d(n: int) -> int:
+        return -sum(1 for a in nums if a < n)
+
+    def _renum_row(m):
+        num = int(m.group(1))
+        if num in nums:
+            return ""
+        k = d(num)
+        if k == 0:
+            return m.group(0)
+        corpo = re.sub(r' r="([A-Z]+)(\d+)"',
+                       lambda mm: f' r="{mm.group(1)}{int(mm.group(2)) + k}"',
+                       m.group(3))
+        return f'<row r="{num + k}"{m.group(2)}>{corpo}</row>'
+
+    texto = re.sub(r'<row r="(\d+)"([^>]*)>(.*?)</row>', _renum_row,
+                   xml_bd2, flags=re.DOTALL)
+    fim_novo = _ultima_linha(texto)
+    texto = _substituir_ou_falhar(
+        r'<dimension ref="A1:J(\d+)"/>',
+        f'<dimension ref="A1:J{fim_novo}"/>', texto,
+        "dimension da BD2 (reconciliação)")
+    removidas = [{
+        "linha": r["num"],
+        "convenio": r["convenio"],
+        "data": SERIAL_EPOCA + timedelta(days=r["serial"]),
+        "valor": r["nao_id"],
+    } for r in alvos]
+    for r in removidas:
+        print(f"[FASE 3] BD2: linha órfã removida — {r['convenio']} "
+              f"{r['data'].strftime('%d/%m/%Y')} R$ {r['valor']:,.2f} "
+              f"(linha {r['linha']})")
+    return texto, fim_novo, removidas
+
+
 # ==============================================================================
 # Ajustes das partes auxiliares
 # ==============================================================================
@@ -1251,6 +1423,22 @@ def _ajustar_cache1(xml: str, novo_fim: int) -> str:
         r'(worksheetSource[^>]*?\bref="A1:I)(\d+)(")',
         lambda m: f'{m.group(1)}{novo_fim}{m.group(3)}', xml,
         "worksheetSource do cache da BD2")
+
+
+def _ajustar_refs_bd2(partes: dict, substituicoes: dict,
+                      fim_bd2_novo: int) -> None:
+    """Tabela e worksheetSource do cache da BD2 acompanham o novo fim — vale
+    também quando a BD2 só perdeu linhas (reconciliação, sem inserções)."""
+    substituicoes["xl/tables/table2.xml"] = _ajustar_tabela(
+        partes["xl/tables/table2.xml"], "A1:J", fim_bd2_novo)
+    parte_cache_bd2 = _parte_cache_bd2(partes)
+    if parte_cache_bd2 is None:
+        raise RuntimeError(
+            "Cache da BD2 não encontrado (nenhum pivot cache com "
+            "worksheetSource ref A1:I) — abortando para não gravar "
+            "uma saída incorreta.")
+    substituicoes[parte_cache_bd2] = _ajustar_cache1(
+        partes[parte_cache_bd2], fim_bd2_novo)
 
 
 def _parte_cache_bd2(partes: dict) -> str | None:
@@ -1446,7 +1634,8 @@ def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
              novas_bd2: list, atualizacoes_bd2: list,
              mudancas_bd1: list | None = None,
              posicoes_bd1: list | None = None,
-             remessas_removidas_bd1: list | None = None) -> None:
+             remessas_removidas_bd1: list | None = None,
+             remocoes_bd2: list | None = None) -> None:
     """Regenera os caches embutidos (BD1/BD2) com os dados finais — determinístico
     a cada rodada (sem depender de o Excel recalcular ao abrir). Timeline e
     slicers do arquivo do usuário são PRESERVADOS (sem filtros forçados)."""
@@ -1484,6 +1673,12 @@ def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
     # novos_por_campo() alimentar as pivôs 1–3)
     if mudancas_bd1:
         _atualizar_records_bd1(cache_bd1, mudancas_bd1, hoje)
+
+    # -- BD2: records das linhas órfãs removidas saem ANTES de qualquer
+    # inserção — as posições _record_pos calculadas pela FASE 3b já são as
+    # finais (a planilha já está sem essas linhas; record = linha - 2) --
+    if remocoes_bd2:
+        cache_bd2.remover_registros({r["linha"] - 2 for r in remocoes_bd2})
 
     # -- BD2: records das linhas novas + normalização dos convênios + upsert
     # das linhas editadas — as demais linhas da base permanecem intactas na
@@ -1581,7 +1776,7 @@ def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
         substituicoes[nome_def] = pc.marcar_refresh_on_load(
             substituicoes[nome_def])
 
-    esperado_bd2 = (n_inicial_bd2 + len(novas_bd2)
+    esperado_bd2 = (n_inicial_bd2 - len(remocoes_bd2 or []) + len(novas_bd2)
                     if fim_bd2_novo is not None else None)
     _validar_pivos(substituicoes, partes, cache_bd1, cache_bd2,
                    fim_bd1_novo, esperado_bd2)
@@ -1616,7 +1811,7 @@ def _validar_pivos(substituicoes: dict, partes: dict, cache_bd1: pc.CachePivot,
                      f"({fim_bd1_novo - 1} linhas de dados)")
     if esperado_bd2 is not None and cache_bd2.n_registros != esperado_bd2:
         erros.append(f"cache BD2 com {cache_bd2.n_registros} records ≠ esperado "
-                     f"({esperado_bd2} = inicial + linhas novas)")
+                     f"({esperado_bd2} = inicial − removidas + novas)")
     if erros:
         raise RuntimeError("Falha no gate dos pivôs: " + "; ".join(erros))
 
@@ -1741,31 +1936,34 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
         print(f"[FASE 3] BD1: {len(mudancas_bd1)} remessa(s) existente(s) "
               f"atualizada(s) — {n_cels_upsert} célula(s).")
 
-    # ---- FASE 3b: BD2 — bloco novo do Não Identificado (R5: tolera limpo=None) ----
+    # ---- FASE 3b: BD2 — reconciliação (linha órfã de reclassificação) e
+    # bloco novo do Não Identificado (R5: tolera limpo=None) ----
     bloco = None
     mapeamento_bd2 = {}
     fim_bd2_novo = None
     novas_bd2: list = []
     atualizacoes_bd2: list = []
+    remocoes_bd2: list = []
     if xlsx_nao_identificado_limpo is not None:
         bloco = _bloco_bd2(xlsx_nao_identificado_limpo)
-        resultado = _editar_bd2(partes["xl/worksheets/sheet6.xml"], bloco, strings)
+        xml_bd2_atual = partes["xl/worksheets/sheet6.xml"]
+        resultado_remocao_bd2 = _remover_orfaos_bd2(xml_bd2_atual, bloco, strings)
+        if resultado_remocao_bd2 is not None:
+            xml_bd2_atual, fim_bd2_novo, remocoes_bd2 = resultado_remocao_bd2
+            substituicoes["xl/worksheets/sheet6.xml"] = xml_bd2_atual
+        resultado = _editar_bd2(xml_bd2_atual, bloco, strings)
         if resultado[0] is not None:
             xml_bd2, fim_bd2_novo, refs, mapeamento_bd2, novas_bd2, atualizacoes_bd2 = resultado
             substituicoes["xl/worksheets/sheet6.xml"] = xml_bd2
             novas_celulas += refs
-            substituicoes["xl/tables/table2.xml"] = _ajustar_tabela(
-                partes["xl/tables/table2.xml"], "A1:J", fim_bd2_novo)
-            parte_cache_bd2 = _parte_cache_bd2(partes)
-            if parte_cache_bd2 is None:
-                raise RuntimeError(
-                    "Cache da BD2 não encontrado (nenhum pivot cache com "
-                    "worksheetSource ref A1:I) — abortando para não gravar "
-                    "uma saída incorreta.")
-            substituicoes[parte_cache_bd2] = _ajustar_cache1(
-                partes[parte_cache_bd2], fim_bd2_novo)
+            _ajustar_refs_bd2(partes, substituicoes, fim_bd2_novo)
             print(f"[FASE 3] BD2: {len(novas_bd2)} linha(s) nova(s), "
                   f"{len(atualizacoes_bd2)} atualizada(s) — fim {fim_bd2_novo}.")
+        elif remocoes_bd2:
+            # só a remoção: tabela e ref do cache também acompanham
+            _ajustar_refs_bd2(partes, substituicoes, fim_bd2_novo)
+            print(f"[FASE 3] BD2: {len(remocoes_bd2)} linha(s) órfã(s) "
+                  f"removida(s) — fim {fim_bd2_novo}.")
         else:
             print("[FASE 3] BD2: nada a mudar.")
     else:
@@ -1777,7 +1975,8 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
     if mudou_alguma_coisa:
         _fase_3c(partes, substituicoes, novas, bloco, mapeamento_bd2,
                  fim_bd1_novo, fim_bd2_novo, novas_bd2, atualizacoes_bd2,
-                 mudancas_bd1, posicoes_bd1, remessas_removidas_bd1)
+                 mudancas_bd1, posicoes_bd1, remessas_removidas_bd1,
+                 remocoes_bd2)
 
     # ---- FASE 4: gravação ----
     if mudou_alguma_coisa:

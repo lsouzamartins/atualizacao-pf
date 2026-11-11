@@ -9,7 +9,7 @@ usar pandas.
 """
 import re
 import zipfile
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 import pytest
@@ -804,14 +804,16 @@ def _pivot_campos_bd2():
     return "".join(campos)
 
 
-def _criar_base(tmp_path, sem_dimension_bd2=False):
+def _criar_base(tmp_path, sem_dimension_bd2=False, bd2_extra=None):
     """Hias sintético mínimo com a anatomia do real: BD1/BD2 + sharedStrings +
     tabelas + calcPr sem fullCalcOnLoad + caches embutidos (defs/records/rels)
     + 2 timelines + 7 slicerCaches + pivôs com pivotFields posicionais.
     Escrito à mão porque o openpyxl 3.1.5 usa strings inline (o motor exige
     sharedStrings). Os caches/pivôs nascem COM refreshOnLoad="1" (estado do
     template da nuvem) — a FASE 3c deve mantê-lo (recálculo ao abrir).
-    sem_dimension_bd2=True gera uma BD2 sem <dimension> (fixture de falha)."""
+    sem_dimension_bd2=True gera uma BD2 sem <dimension> (fixture de falha).
+    bd2_extra = [(convênio, data, valores C..I)] acrescenta linhas à BD2 e
+    cresce o fixture junto (sharedStrings, planilha, tabela, cache)."""
     ser_ago = (date(2026, 8, 31) - ie.SERIAL_EPOCA).days
     ser_set = (date(2026, 9, 30) - ie.SERIAL_EPOCA).days
 
@@ -822,6 +824,11 @@ def _criar_base(tmp_path, sem_dimension_bd2=False):
     cabecalho_bd2 = ["Convênio", "Data", "Dep. Líq.", "Dep. Bruto", "Quitação",
                      "Não Identificado", "Acordos", "Glosa Aceita", "NI Real", "FLAG"]
     textos_sst = cabecalho_bd1 + ["HOSPITAL ABC", "Convênio Z "] + cabecalho_bd2
+    linhas_bd2 = [("Convênio Z ", ser_ago, [1, 2, 3, 4, 5, 6, 7])]
+    for conv, quando, valores in (bd2_extra or []):
+        if conv not in textos_sst:
+            textos_sst.append(conv)
+        linhas_bd2.append((conv, (quando - ie.SERIAL_EPOCA).days, valores))
     sis = "".join(f'<si><t xml:space="preserve">{t}</t></si>' if t.endswith(" ")
                   else f"<si><t>{t}</t></si>" for t in textos_sst)
     shared = (DECL
@@ -853,13 +860,16 @@ def _criar_base(tmp_path, sem_dimension_bd2=False):
     letras_bd2 = "ABCDEFGHIJ"
     cel_bd2_header = "".join(f'<c r="{c}1" t="s"><v>{24 + i}</v></c>'
                              for i, c in enumerate(letras_bd2))
-    row2_bd2 = ('<row r="2">'
-                '<c r="A2" s="5" t="s"><v>23</v></c>'    # "Convênio Z "
-                f'<c r="B2" s="15"><v>{ser_ago}</v></c>'
-                + "".join(f'<c r="{c}2" s="43"><v>{n}</v></c>'
-                          for c, n in zip("CDEFGHI", [1, 2, 3, 4, 5, 6, 7]))
-                + '<c r="J2" s="53"><v>1</v></c>'
-                + '</row>')
+    rows_bd2 = "".join(
+        f'<row r="{num}">'
+        f'<c r="A{num}" s="5" t="s"><v>{textos_sst.index(conv)}</v></c>'
+        f'<c r="B{num}" s="15"><v>{serial}</v></c>'
+        + "".join(f'<c r="{c}{num}" s="43"><v>{n}</v></c>'
+                  for c, n in zip("CDEFGHI", valores))
+        + f'<c r="J{num}" s="53"><v>1</v></c>'
+        + '</row>'
+        for num, (conv, serial, valores) in enumerate(linhas_bd2, start=2))
+    fim_bd2 = len(linhas_bd2) + 1
 
     ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
     sheet1 = (DECL + f'<worksheet {ns}><dimension ref="A1:A1"/><sheetData>'
@@ -872,12 +882,12 @@ def _criar_base(tmp_path, sem_dimension_bd2=False):
               + 'activePane="bottomRight" state="frozen"/></sheetView></sheetViews>'
               + '<dimension ref="A1:V2"/><sheetData>'
               + f'<row r="1">{cel_bd1_header}</row>{row2_bd1}</sheetData></worksheet>')
-    dimension_bd2 = '<dimension ref="A1:J2"/>' if not sem_dimension_bd2 else ""
+    dimension_bd2 = f'<dimension ref="A1:J{fim_bd2}"/>' if not sem_dimension_bd2 else ""
     sheet6 = (DECL + f'<worksheet {ns}><sheetViews><sheetView workbookViewId="0">'
               + '<pane ySplit="1" topLeftCell="A793" activePane="bottomLeft" '
               + 'state="frozen"/></sheetView></sheetViews>'
               + f'{dimension_bd2}<sheetData>'
-              + f'<row r="1">{cel_bd2_header}</row>{row2_bd2}</sheetData></worksheet>')
+              + f'<row r="1">{cel_bd2_header}</row>{rows_bd2}</sheetData></worksheet>')
 
     def tabela(id_, nome, ref, colunas):
         cols = "".join(f'<tableColumn id="{i}" name="{c}"/>'
@@ -890,7 +900,7 @@ def _criar_base(tmp_path, sem_dimension_bd2=False):
 
     table1 = tabela(1, "BD_1", "A1:V2", cabecalho_bd1)
     # no arquivo real a tabela da BD2 cobre A1:J (a coluna J/FLAG entra)
-    table2 = tabela(2, "Tabela1", "A1:J2", cabecalho_bd2[:9])
+    table2 = tabela(2, "Tabela1", f"A1:J{fim_bd2}", cabecalho_bd2[:9])
 
     # pivôs com pivotFields posicionais e refreshOnLoad="1" (estado do template
     # da nuvem — a FASE 3c MANTÉM: recálculo ao abrir); cacheIds da
@@ -935,17 +945,24 @@ def _criar_base(tmp_path, sem_dimension_bd2=False):
         '<cacheField name="Tipo de remessa" numFmtId="0">'
         '<sharedItems count="3"><s v="Comum"/><s v="Recurso"/><m/></sharedItems></cacheField>',
     ]
+    convs_bd2 = list(dict.fromkeys(conv for conv, _s, _v in linhas_bd2))
+    datas_bd2 = sorted({serial for _c, serial, _v in linhas_bd2})
     campos_bd2 = [
-        '<cacheField name="Convênio" numFmtId="0"><sharedItems count="1"><s v="Convênio Z "/></sharedItems></cacheField>',
-        '<cacheField name="Data" numFmtId="14"><sharedItems count="1"><d v="2026-08-31T00:00:00"/></sharedItems></cacheField>',
+        f'<cacheField name="Convênio" numFmtId="0"><sharedItems count="{len(convs_bd2)}">'
+        + "".join(f'<s v="{conv}"/>' for conv in convs_bd2)
+        + '</sharedItems></cacheField>',
+        f'<cacheField name="Data" numFmtId="14"><sharedItems count="{len(datas_bd2)}">'
+        + "".join(f'<d v="{(ie.SERIAL_EPOCA + timedelta(days=s)).isoformat()}T00:00:00"/>'
+                  for s in datas_bd2)
+        + '</sharedItems></cacheField>',
     ] + [f'<cacheField name="{n}" numFmtId="0"/>' for n in (
         "Dep Líq", "Dep Bruto", "Quitação", "Não Identificado", "Acordos",
         "Glosa Aceita", "NI Real")]
 
     def1 = (DECL + f'<pivotCacheDefinition {ns} {ns_r} '
-            + 'refreshedBy="Sistema" refreshedDate="46200.0" recordCount="1" '
+            + f'refreshedBy="Sistema" refreshedDate="46200.0" recordCount="{len(linhas_bd2)}" '
             + 'createdVersion="7" refreshedVersion="7" refreshOnLoad="1">'
-            + '<cacheSource type="worksheet"><worksheetSource ref="A1:I2" sheet="BD2"/></cacheSource>'
+            + f'<cacheSource type="worksheet"><worksheetSource ref="A1:I{fim_bd2}" sheet="BD2"/></cacheSource>'
             + f'<cacheFields count="9">{"".join(campos_bd2)}</cacheFields>'
             + '</pivotCacheDefinition>')
     def2 = (DECL + f'<pivotCacheDefinition {ns} {ns_r} '
@@ -970,11 +987,14 @@ def _criar_base(tmp_path, sem_dimension_bd2=False):
                + '<n v="0"/><n v="100"/><n v="0"/><n v="0"/>'    # R–U calculadas
                + '<x v="0"/>'                                    # Tipo (Comum)
                + '</r></pivotCacheRecords>')
-    rec_bd2 = (DECL + f'<pivotCacheRecords {ns} {ns_r} count="1"><r>'
-               + '<x v="0"/><x v="0"/>'                          # Convênio, Data
-               + '<n v="1"/><n v="2"/><n v="3"/><n v="4"/>'
-               + '<n v="5"/><n v="6"/><n v="7"/>'
-               + '</r></pivotCacheRecords>')
+    recs_bd2 = "".join(
+        '<r>'
+        f'<x v="{convs_bd2.index(conv)}"/><x v="{datas_bd2.index(serial)}"/>'
+        + "".join(f'<n v="{v}"/>' for v in valores)
+        + '</r>'
+        for conv, serial, valores in linhas_bd2)
+    rec_bd2 = (DECL + f'<pivotCacheRecords {ns} {ns_r} count="{len(linhas_bd2)}">'
+               + recs_bd2 + '</pivotCacheRecords>')
 
     def rels_def(n_rec):
         return (DECL
@@ -1171,6 +1191,25 @@ def _criar_limpo(tmp_path):
         "Acordos": [14.0, 24.0],
         "Glosa Aceita": [15.0, 25.0],
         "NI Real": [16.0, 26.0],
+    }).to_excel(caminho, index=False)
+    return caminho
+
+
+def _criar_limpo_bradesco(tmp_path):
+    """NI de hoje com o depósito já reclassificado: o valor de 04/11/2026
+    aparece só na BRADESCO OPERADORA PLANO (quitado) — a BRADESCO SEGUROS
+    que a base ainda carrega é a linha órfã da reconciliação."""
+    caminho = tmp_path / "nao_identificado_bradesco.xlsx"
+    pd.DataFrame({
+        "Convênio": ["BRADESCO OPERADORA PLANO"],
+        "Data": [datetime(2026, 11, 4)],
+        "Dep. Líq.": [1637.71],
+        "Dep. Bruto": [1637.71],
+        "Quitação": [1637.71],
+        "Não Identificado": [0.0],
+        "Acordos": [0.0],
+        "Glosa Aceita": [0.0],
+        "NI Real": [0.0],
     }).to_excel(caminho, index=False)
     return caminho
 
@@ -1415,6 +1454,45 @@ def test_processamento_remove_remessa_que_saiu_do_wpd(tmp_path):
         # o sharedItem fica como padding, estado que o Excel tolera e que o
         # remover_registros_finais da BD2 também deixa
         assert set(re.findall(r'<r><x v="(\d+)"', rec2)) == {"1", "2"}
+
+
+def test_processamento_remove_linha_orfa_da_bd2(tmp_path):
+    """Reconciliação BD2 × NI (caso real de 04/11/2026): a base carrega o
+    depósito de R$ 1.637,71 nos DOIS convênios — BRADESCO OPERADORA PLANO
+    (quitado, correto) e BRADESCO SEGUROS (Não Identificado, órfão da
+    reclassificação). O NI de hoje só lista a OPERADORA: a linha órfã sai da
+    planilha e do cache, com rows/dimension/tabela/ref renumerados. A AMIL,
+    sem contrapartida quitada, fica (não é prova de reclassificação)."""
+    operadora = [1637.71, 1637.71, 1637.71, 0, 0, 0, 0]
+    orfao = [1637.71, 1637.71, 0, 1637.71, 0, 0, 1637.71]
+    amil = [100.0, 100.0, 0, 100.0, 0, 0, 100.0]
+    base = _criar_base(tmp_path, bd2_extra=[
+        ("BRADESCO OPERADORA PLANO", date(2026, 11, 4), operadora),
+        ("BRADESCO SEGUROS", date(2026, 11, 4), orfao),
+        ("AMIL", date(2026, 11, 4), amil),
+    ])
+    wpd = _criar_wpd(tmp_path)
+    limpo = _criar_limpo_bradesco(tmp_path)
+    final = tmp_path / "final_bd2.xlsx"
+
+    ie.processar_fases_2_3_4_hias(str(limpo), str(base), str(final),
+                                  str(tmp_path), str(tmp_path), str(wpd))
+
+    from openpyxl import load_workbook
+    wb = load_workbook(final, read_only=True)
+    linhas = list(wb["BD2"].iter_rows(values_only=True))
+    assert [str(l[0]).strip() for l in linhas] == [
+        "Convênio", "Convênio Z", "BRADESCO OPERADORA PLANO", "AMIL"]
+    with zipfile.ZipFile(final) as zf:
+        sheet6 = zf.read("xl/worksheets/sheet6.xml").decode("utf-8")
+        assert '<dimension ref="A1:J4"/>' in sheet6
+        assert [int(n) for n in re.findall(r'<row r="(\d+)"', sheet6)] == [1, 2, 3, 4]
+        assert 'ref="A1:J4"' in zf.read("xl/tables/table2.xml").decode("utf-8")
+        def1 = zf.read("xl/pivotCache/pivotCacheDefinition1.xml").decode("utf-8")
+        rec1 = zf.read("xl/pivotCache/pivotCacheRecords1.xml").decode("utf-8")
+        assert 'recordCount="3"' in def1
+        assert 'ref="A1:I4"' in def1
+        assert rec1.count("<r>") == 3 and 'count="3"' in rec1
 
 
 def _trocar_caches(tmp_path, base):
