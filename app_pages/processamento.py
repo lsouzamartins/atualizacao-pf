@@ -7,6 +7,9 @@ Revisão: Claude Code (Anthropic) · 28/07/2026 · migrada para app_pages/ em 19
 · 01/09/2026 · uploads por sessão (file_uploader), gravação no banco e downloads
 · 15/09/2026 · base da Posição Financeira persistente no site (dados/base_pf/):
   a execução pede só os 2 relatórios, faz backup e atualiza a própria base
+· 11/11/2026 · conferência automática pós-execução (opção 1–3): validações dos
+  relatórios do dia, comparação opcional com a PF do Manual e conciliação
+  depósito × baixas por convênio — relatório exibido, salvo e baixável
 ==============================================================================
 """
 import os
@@ -21,6 +24,7 @@ import streamlit as st
 
 import banco
 import base_pf
+import conferencia
 
 from ui_comum import icone, pastas, VERSAO
 from core import (
@@ -83,6 +87,7 @@ XLSX_HIAS_BASE = base_pf.caminho_base()
 defaults = {
     "ultimo_log": "", "ultimo_sucesso": None,
     "ultima_execucao": None, "em_andamento": False,
+    "ultima_conferencia": "",
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -138,6 +143,12 @@ with col_acoes:
         "WPD-26.xls": col1.file_uploader("WPD-26 (.xls)", type=["xls"], key="up_wpd"),
         "Não_Identificado.xls": col2.file_uploader("Não Identificado (.xls)", type=["xls"], key="up_ni"),
     }
+    upload_manual = st.file_uploader(
+        "Posição Financeira do Manual (.xlsx) — opcional",
+        type=["xlsx"], key="up_manual",
+        help="Se enviada, o relatório de conferência compara a BD1 e a BD2 do "
+             "site com as do Manual: só no Manual, só no site e valores "
+             "divergentes, além dos totais por vencimento.")
     btn_desabilitado = (not all(arquivos.values())
                         or st.session_state.em_andamento
                         or not base_pf.base_existe())
@@ -187,6 +198,10 @@ if executar and not st.session_state.em_andamento:
     xlsx_nao_identificado_limpo = os.path.join(PASTA_SAIDA, "Não_Identificado_Extraido.xlsx")
     data_hoje = datetime.now().strftime("%d.%m.%y")
     xlsx_hias_final = os.path.join(PASTA_SAIDA, f"Posição Financeira Hias_{data_hoje}.xlsx")
+    xlsx_manual = (os.path.join(pasta_sessao, "Posicao_Financeira_Manual.xlsx")
+                   if upload_manual is not None else None)
+    caminho_conferencia = None
+    texto_conferencia = ""
 
     # Rastreabilidade: a execução é gravada no banco DESDE O INÍCIO
     # (status 'em_andamento') — se o processo morrer no meio, fica o registro.
@@ -204,6 +219,9 @@ if executar and not st.session_state.em_andamento:
         for nome, upload in arquivos.items():
             with open(os.path.join(pasta_sessao, nome), "wb") as f:
                 f.write(upload.getbuffer())
+        if upload_manual is not None:
+            with open(xlsx_manual, "wb") as f:
+                f.write(upload_manual.getbuffer())
 
         with redirect_stdout(log_buffer), redirect_stderr(log_buffer):
             # Limpeza de Excel residual
@@ -233,6 +251,23 @@ if executar and not st.session_state.em_andamento:
 
             # Resumo
             gerar_resumo(df_ni, df_wpd, xlsx_wpd_limpo, xlsx_nao_identificado_limpo)
+
+            # CONFERÊNCIA AUTOMÁTICA (opções 1–3 de 11/11/2026): aviso, nunca
+            # interrompe a execução — relatório fica salvo e disponível na tela
+            try:
+                texto_conferencia = conferencia.gerar_conferencia(
+                    xlsx_hias_final, df_wpd=df_wpd, df_ni=df_ni,
+                    xlsx_manual=xlsx_manual)
+                caminho_conferencia = os.path.join(
+                    PASTA_SAIDA, f"Conferencia_PF_{data_hoje}.txt")
+                with open(caminho_conferencia, "w", encoding="utf-8") as f:
+                    f.write(texto_conferencia)
+                print("\n" + texto_conferencia)
+            except Exception as e_conf:
+                texto_conferencia = ""
+                caminho_conferencia = None
+                print(f"[AVISO] Conferência não pôde ser gerada: "
+                      f"{type(e_conf).__name__}: {e_conf}")
 
             progress_bar.progress(100, text="Concluído com sucesso!")
             sucesso = True
@@ -269,6 +304,8 @@ if executar and not st.session_state.em_andamento:
             arquivos_gerados = [os.path.basename(xlsx_hias_final),
                                 os.path.basename(xlsx_wpd_limpo),
                                 os.path.basename(xlsx_nao_identificado_limpo)]
+            if caminho_conferencia and os.path.exists(caminho_conferencia):
+                arquivos_gerados.append(os.path.basename(caminho_conferencia))
             # grava com a conexão AINDA ABERTA (bug da execução 20: o close
             # acontecia no finally, antes desta gravação)
             banco.concluir_sucesso(conn, execucao_id, arquivos_gerados, df_resumos)
@@ -290,6 +327,7 @@ if executar and not st.session_state.em_andamento:
         except Exception as e:
             print(f"[AVISO] Não foi possível salvar o log da execução: {e}")
     st.session_state.ultimo_log = log_texto
+    st.session_state.ultima_conferencia = texto_conferencia
     st.session_state.ultimo_sucesso = sucesso
     st.session_state.ultima_execucao = datetime.now().strftime("%d/%m/%Y %H:%M")
 
@@ -308,6 +346,17 @@ if executar and not st.session_state.em_andamento:
             )
 
     _render_log(log_texto)
+
+    if sucesso and st.session_state.ultima_conferencia:
+        st.markdown(f"### {icone('circle-check', 20, '#1C5A8A')} Conferência automática",
+                    unsafe_allow_html=True)
+        with st.container(height=450, border=True):
+            st.code(st.session_state.ultima_conferencia, language=None,
+                    line_numbers=False)
+        st.download_button("Baixar relatório de conferência",
+                           data=st.session_state.ultima_conferencia,
+                           file_name=f"Conferencia_PF_{data_hoje}.txt",
+                           mime="text/plain")
 
     if sucesso and os.path.exists(xlsx_hias_final):
         with open(xlsx_hias_final, "rb") as f:
@@ -340,6 +389,9 @@ else:
             <li><b>Fase 1:</b> Extrai e limpa dados do arquivo <code>Não_Identificado.xls</code></li>
             <li><b>Fase 2-3:</b> Abre o Excel Hias e injeta os dados processados na aba <code>BD2</code></li>
             <li><b>Fase 4:</b> Salva uma nova versão datada do arquivo Hias</li>
+            <li><b>Conferência:</b> valida os relatórios do dia e concilia
+            depósito × baixas por convênio; com a PF do Manual enviada (opcional),
+            compara BD1 e BD2 do site com as do Manual</li>
         </ol>
         <p>A base da Posição Financeira fica salva no site: você envia só os
         2 relatórios e o site atualiza a própria base (com backup automático).
