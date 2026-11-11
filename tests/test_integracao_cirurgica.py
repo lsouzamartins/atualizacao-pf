@@ -1354,6 +1354,69 @@ def test_limpo_none_integra_so_bd1(tmp_path):
         assert 'ref="A1:V4"' in zf.read("xl/tables/table1.xml").decode("utf-8")
 
 
+def _criar_wpd_sem_117129(tmp_path):
+    """WPD do dia SEM a remessa 117129 — ela saiu do relatório (reconciliação
+    11/11/2026: a base do site é encadeada, a ausente ficava para sempre)."""
+    caminho = tmp_path / "wpd_sem_117129.xlsx"
+    pd.DataFrame({
+        "Remessa": [200001, "200002 (R)"],
+        "Protocolo": [119, 120],
+        "Emissão": [datetime(2026, 8, 31)] * 2,
+        "Vencimento": [datetime(2026, 9, 30)] * 2,
+        "Entrega": [None] * 2,
+        "Baixa": [None] * 2,
+        "Nota Fiscal": [None] * 2,
+        "Convênio": ["OUTRO CONVÊNIO", "TERCEIRO"],
+        "Faturado": [100.0] * 2,
+        "Valor Pago": [100.0] * 2,
+        "Valor ISS": [5.0] * 2,
+        "Vlr Guia": [100.0] * 2,
+        "% Pré-glosa": [0.0] * 2,
+        "Valor Glosa": [0.0] * 2,
+        "% Glosa": [0.0] * 2,
+        "Atraso": [0.0] * 2,
+        "Faturas": [1.0] * 2,
+    }).to_excel(caminho, index=False)
+    return caminho
+
+
+def test_processamento_remove_remessa_que_saiu_do_wpd(tmp_path):
+    """Reconciliação BD1 × WPD: a remessa 117129 (venc 30/09/2026, sem baixa)
+    não está no WPD do dia — sai da PLANILHA e do CACHE, com as rows, a
+    dimension, a tabela e o nome definido renumerados; as duas novas entram
+    no lugar. Sem isso a remessa que sai do relatório fica na base para
+    sempre (62 guias, R$ 265.040,35 em 11/11/2026)."""
+    base = _criar_base(tmp_path)
+    wpd = _criar_wpd_sem_117129(tmp_path)
+    final = tmp_path / "final.xlsx"
+
+    ie.processar_fases_2_3_4_hias(None, str(base), str(final),
+                                  str(tmp_path), str(tmp_path), str(wpd))
+
+    from openpyxl import load_workbook
+    wb = load_workbook(final, read_only=True)
+    linhas1 = list(wb["BD1"].iter_rows(values_only=True))
+    assert len(linhas1) == 3          # 1 cabeçalho + 2 novas (a 117129 saiu)
+    assert linhas1[1][0] == 200001
+    assert linhas1[2][0] == "200002 (R)"
+    with zipfile.ZipFile(base) as zb, zipfile.ZipFile(final) as zf:
+        assert set(zf.namelist()) == set(zb.namelist())
+        sheet5 = zf.read("xl/worksheets/sheet5.xml").decode("utf-8")
+        assert '<dimension ref="A1:V3"/>' in sheet5
+        assert "117129" not in sheet5
+        assert 'ref="A1:V3"' in zf.read("xl/tables/table1.xml").decode("utf-8")
+        assert "'BD1'!$A$1:$V$3" in zf.read("xl/workbook.xml").decode("utf-8")
+        def2 = zf.read("xl/pivotCache/pivotCacheDefinition2.xml").decode("utf-8")
+        rec2 = zf.read("xl/pivotCache/pivotCacheRecords2.xml").decode("utf-8")
+        assert 'recordCount="2"' in def2
+        assert rec2.count("<r>") == 2 and 'count="2"' in rec2
+        assert '<n v="200001"/>' in def2 and '<s v="200002 (R)"/>' in def2
+        # nenhum record aponta para o item da remessa removida (entrada 0) —
+        # o sharedItem fica como padding, estado que o Excel tolera e que o
+        # remover_registros_finais da BD2 também deixa
+        assert set(re.findall(r'<r><x v="(\d+)"', rec2)) == {"1", "2"}
+
+
 def _trocar_caches(tmp_path, base):
     """Reescreve a base com as partes de pivot cache RENUMERADAS (1↔2),
     como o Excel fez no arquivo real de 02/09/2026: cacheDefinition1 passa a

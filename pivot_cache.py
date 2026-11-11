@@ -186,7 +186,11 @@ class CachePivot:
             return
         idx_fim = self._reg.rindex("</pivotCacheRecords>")
         cabeca = self._reg[:idx_fim]
-        primeiro = cabeca.index("<r>")
+        primeiro = cabeca.find("<r>")
+        if primeiro == -1:
+            # cache VAZIO (a reconciliação BD1 × WPD pode remover o último
+            # record): os novos entram logo após a abertura do elemento
+            primeiro = len(cabeca)
         prefixo = cabeca[:primeiro]
         existentes = _RE_R.findall(cabeca[primeiro:])
         if not 0 <= posicao <= len(existentes):
@@ -250,6 +254,27 @@ class CachePivot:
                 f"cache com {len(blocos)} registros não tem {n} finais para remover")
         self._reg = prefixo + "".join(blocos[:-n]) + self._reg[idx_fim:]
         self._n_registros -= n
+
+    def remover_registros(self, indices: set[int]) -> None:
+        """Remove os registros das posições `indices` (0-based na ordem atual
+        da lista <r>) — reconciliação BD1 × WPD. O chamador localiza os
+        índices pela chave (x-ref da Remessa): a posição do record não é
+        confiável em trechos antigos dessincronizados da planilha."""
+        if not indices:
+            return
+        idx_fim = self._reg.rindex("</pivotCacheRecords>")
+        cabeca = self._reg[:idx_fim]
+        primeiro = cabeca.index("<r>")
+        prefixo = cabeca[:primeiro]
+        blocos = _RE_R.findall(cabeca[primeiro:])
+        for i in indices:
+            if not (0 <= i < len(blocos)):
+                raise RuntimeError(
+                    f"remover_registros: índice {i} fora de [0, {len(blocos)})")
+        self._reg = (prefixo
+                     + "".join(b for i, b in enumerate(blocos) if i not in indices)
+                     + self._reg[idx_fim:])
+        self._n_registros -= len(indices)
 
     def atualizar_registro(self, indice: int, valores: list,
                            valores_antigos: list) -> None:

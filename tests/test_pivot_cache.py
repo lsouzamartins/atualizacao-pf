@@ -97,6 +97,24 @@ def test_anexar_e_remover_registros():
         cache.remover_registros_finais(5)
 
 
+def test_remover_registros_por_indice():
+    """Reconciliação BD1 × WPD: remove records em posições AVULSAS (não só os
+    finais), mantendo a ordem dos restantes e o count do cache."""
+    cache = pc.CachePivot(
+        _def([]),
+        _records(['<n v="1"/>', '<n v="2"/>', '<n v="3"/>', '<n v="4"/>']))
+    cache.remover_registros({1, 3})
+    assert cache.n_registros == 2
+    _, registros = cache.para_xml()
+    assert registros.count("<r>") == 2
+    assert '<r><n v="1"/></r>' in registros and '<r><n v="3"/></r>' in registros
+    assert 'count="2"' in registros
+    cache.remover_registros(set())  # nada a remover: não altera
+    assert cache.n_registros == 2
+    with pytest.raises(RuntimeError, match="fora de"):
+        cache.remover_registros({2})
+
+
 def test_para_xml_anexa_itens_e_atualiza_metadados():
     campos = ['<cacheField name="Convênio" numFmtId="0"><sharedItems containsString="1" count="1">'
               '<s v="HOSPITAL ABC"/></sharedItems></cacheField>']

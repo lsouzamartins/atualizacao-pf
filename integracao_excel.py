@@ -39,6 +39,14 @@ SERIAL_EPOCA = date(1899, 12, 30)  # serial do Excel = dias desde 1899-12-30
 _DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
 _NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 
+# Reconciliação BD1 × WPD (11/11/2026): a base do site é encadeada e o upsert
+# só toca as remessas que estão no WPD — a remessa que sai do relatório fica
+# na base para sempre (62 guias de out–dez/2026, R$ 265.040,35). Remove-se a
+# remessa ausente do WPD, SEM baixa e com vencimento a partir desta data; o
+# corte preserva as remessas de jan–mar/2026 que vieram da base de origem e
+# que o Manual mantém.
+RECONCILIACAO_DESDE = date(2026, 9, 1)
+
 # Sem isto, o ElementTree serializa o namespace padrão como prefixo "ns0:".
 ET.register_namespace("", _NS)
 
@@ -798,6 +806,111 @@ def _upsert_bd1(xml_bd1: str, df_wpd: pd.DataFrame, remessas_existentes: set,
 
 
 # ==============================================================================
+# BD1 — RECONCILIAÇÃO: remove o que saiu do WPD (11/11/2026)
+# ==============================================================================
+def _remover_ausentes_bd1(xml_bd1: str, df_wpd: pd.DataFrame, strings,
+                          desde: date = RECONCILIACAO_DESDE,
+                          ) -> tuple[str, int, list[str]] | None:
+    """Remove da BD1 as remessas que SAÍRAM do WPD do dia — sem baixa e com
+    vencimento >= `desde`. Preserva as remessas presentes no WPD, as que têm
+    Baixa (histórico de pagamento) e as de vencimento anterior ao corte (base
+    de origem). Renumera rows/refs/fórmulas seguintes e a dimension, como a
+    inserção de _editar_bd1. Retorna (xml_novo, fim_novo, removidas) ou None.
+    """
+    linhas = _linhas_bd1(xml_bd1, strings)
+    presentes = {_normalizar_remessa(r) for r in df_wpd["Remessa"].dropna()}
+    alvos: dict[int, str] = {}
+    for remessa, (num, _abertura, corpo) in linhas.items():
+        if remessa in presentes:
+            continue
+        if _valor_celula(corpo, "F", num) is not None:  # baixa preenchida
+            continue
+        venc = _valor_celula(corpo, "D", num)
+        if venc is None:
+            continue
+        try:
+            data_venc = SERIAL_EPOCA + timedelta(days=float(venc))
+        except ValueError:
+            try:
+                data_venc = datetime.fromisoformat(venc).date()
+            except ValueError:
+                continue
+        if data_venc < desde:
+            continue
+        alvos[num] = remessa
+    if not alvos:
+        return None
+
+    xml_bd1 = _materializar_shared(xml_bd1)
+    removidos = sorted(alvos)
+
+    def d(n: int) -> int:
+        return -sum(1 for a in removidos if a < n)
+
+    _RE_REF_F = re.compile(r"([A-Z]{1,2})(\d+)")
+    _COLS_FORMULA = set("ABCDEFGHIJKLMNOPQRSTUV")
+
+    def _renum_row(m):
+        num = int(m.group(1))
+        if num in alvos:
+            return ""
+        k = d(num)
+        if k == 0:
+            return m.group(0)
+        corpo = re.sub(r' r="([A-Z]+)(\d+)"',
+                       lambda mm: f' r="{mm.group(1)}{int(mm.group(2)) + k}"',
+                       m.group(3))
+
+        def _renum_f(fm):
+            interno = _RE_REF_F.sub(
+                lambda r2: (f"{r2.group(1)}{int(r2.group(2)) + k}"
+                            if r2.group(1) in _COLS_FORMULA else r2.group(0)),
+                fm.group(2))
+            return fm.group(1) + interno + fm.group(3)
+
+        corpo = re.sub(r"(<f>)(.*?)(</f>)", _renum_f, corpo)
+        return f'<row r="{num + k}"{m.group(2)}>{corpo}</row>'
+
+    texto = re.sub(r'<row r="(\d+)"([^>]*)>(.*?)</row>', _renum_row,
+                   xml_bd1, flags=re.DOTALL)
+    fim_novo = _ultima_linha(texto)
+    texto = _substituir_ou_falhar(
+        r'<dimension ref="A1:V(\d+)"/>',
+        f'<dimension ref="A1:V{fim_novo}"/>', texto,
+        "dimension da BD1 (reconciliação)")
+    return texto, fim_novo, [alvos[n] for n in removidos]
+
+
+def _remover_records_bd1(cache: pc.CachePivot, remessas: list[str]) -> None:
+    """Remove do cache da BD1 os records das remessas removidas da planilha —
+    localizados pela entrada 0 (x-ref da Remessa), como no upsert: a posição
+    do record não serve de chave em trechos antigos dessincronizados."""
+    if not remessas:
+        return
+    blocos = cache.blocos()
+    por_entrada0 = {}
+    for i, b in enumerate(blocos):
+        m0 = re.match(r'<r><x v="(\d+)"/>', b)
+        if m0:
+            por_entrada0[int(m0.group(1))] = i
+    itens_remessa = cache.indices_por_valor("Remessa")
+    indices = set()
+    for rem in remessas:
+        chaves = [("n", rem), ("s", rem)]
+        if re.fullmatch(r"\d+", rem):
+            chaves.insert(1, ("n", rem + ".0"))
+        candidatos = [itens_remessa[k] for k in chaves if k in itens_remessa]
+        indice = next((por_entrada0[i] for i in candidatos
+                       if i in por_entrada0), None)
+        if indice is None:
+            raise RuntimeError(
+                f"remessa {rem!r} removida da planilha mas não localizada "
+                f"nos records do cache BD1")
+        indices.add(indice)
+    cache.remover_registros(indices)
+
+
+# ==============================================================================
 # BD2 — bloco obsoleto, normalização da coluna A e bloco novo
 # ==============================================================================
 def _bloco_bd2(xlsx_limpo: str) -> list[dict] | None:
@@ -1332,7 +1445,8 @@ def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
              fim_bd1_novo: int | None, fim_bd2_novo: int | None,
              novas_bd2: list, atualizacoes_bd2: list,
              mudancas_bd1: list | None = None,
-             posicoes_bd1: list | None = None) -> None:
+             posicoes_bd1: list | None = None,
+             remessas_removidas_bd1: list | None = None) -> None:
     """Regenera os caches embutidos (BD1/BD2) com os dados finais — determinístico
     a cada rodada (sem depender de o Excel recalcular ao abrir). Timeline e
     slicers do arquivo do usuário são PRESERVADOS (sem filtros forçados)."""
@@ -1346,6 +1460,12 @@ def _fase_3c(partes: dict, substituicoes: dict, novas: pd.DataFrame,
     cache_bd2 = pc.CachePivot(substituicoes.get(nome_def_bd2, partes[nome_def_bd2]),
                               partes[nome_rec_bd2])
     n_inicial_bd2 = cache_bd2.n_registros
+
+    # -- BD1: records das remessas removidas pela reconciliação saem ANTES de
+    # qualquer inserção — as posições de posicoes_bd1 já são as finais (o
+    # cache acompanha a planilha depois desta remoção) --
+    if remessas_removidas_bd1:
+        _remover_records_bd1(cache_bd1, remessas_removidas_bd1)
 
     # -- BD1: um record por remessa nova, na POSIÇÃO da linha inserida --
     # (a base é agrupada por convênio; os records novos entram junto dos
@@ -1578,21 +1698,36 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
     mudancas_bd1: list = []
     posicoes_bd1: list = []
 
-    # ---- FASE 3a: BD1 — anexa as remessas novas do WPD ----
-    remessas_existentes = _remessas_bd1(partes["xl/worksheets/sheet5.xml"], strings)
+    # ---- FASE 3a0: BD1 — reconciliação: remove o que saiu do WPD ----
+    # (a base do site é encadeada e o upsert só toca remessas que estão no
+    # WPD — sem esta fase, a remessa que sai do relatório fica na base para
+    # sempre: 62 guias de out–dez/2026, R$ 265.040,35 em 11/11/2026)
+    xml_bd1_atual = partes["xl/worksheets/sheet5.xml"]
     df_wpd = pd.read_excel(xlsx_wpd_limpo)
+    remessas_removidas_bd1: list = []
+    resultado_remocao = _remover_ausentes_bd1(xml_bd1_atual, df_wpd, strings)
+    if resultado_remocao is not None:
+        xml_bd1_atual, fim_bd1_novo, remessas_removidas_bd1 = resultado_remocao
+        substituicoes["xl/worksheets/sheet5.xml"] = xml_bd1_atual
+        houve_mudanca_bd1 = True
+        print(f"[FASE 3] BD1: {len(remessas_removidas_bd1)} remessa(s) "
+              f"removida(s) (saíram do WPD, sem baixa) — fim {fim_bd1_novo}.")
+
+    # ---- FASE 3a: BD1 — anexa as remessas novas do WPD ----
+    remessas_existentes = _remessas_bd1(xml_bd1_atual, strings)
     novas = _linhas_novas_originais(df_wpd, remessas_existentes)
     if len(novas) == 0:
         print("[FASE 3] BD1: nenhuma remessa nova no WPD — nada a anexar.")
     else:
-        resultado = _editar_bd1(partes["xl/worksheets/sheet5.xml"], novas, strings)
+        resultado = _editar_bd1(xml_bd1_atual, novas, strings)
         xml_bd1, fim_bd1_novo, refs, posicoes_bd1 = resultado
         substituicoes["xl/worksheets/sheet5.xml"] = xml_bd1
         novas_celulas += refs
         houve_mudanca_bd1 = True
+        print(f"[FASE 3] BD1: {len(novas)} remessa(s) anexada(s) — fim {fim_bd1_novo}.")
+    if fim_bd1_novo is not None:
         substituicoes["xl/tables/table1.xml"] = _ajustar_tabela(
             partes["xl/tables/table1.xml"], "A1:V", fim_bd1_novo)
-        print(f"[FASE 3] BD1: {len(novas)} remessa(s) anexada(s) — fim {fim_bd1_novo}.")
 
     # ---- FASE 3a2: BD1 — upsert de baixa/valores das remessas existentes ----
     resultado_upsert = _upsert_bd1(
@@ -1642,7 +1777,7 @@ def processar_fases_2_3_4_hias(xlsx_nao_identificado_limpo, xlsx_hias_base,
     if mudou_alguma_coisa:
         _fase_3c(partes, substituicoes, novas, bloco, mapeamento_bd2,
                  fim_bd1_novo, fim_bd2_novo, novas_bd2, atualizacoes_bd2,
-                 mudancas_bd1, posicoes_bd1)
+                 mudancas_bd1, posicoes_bd1, remessas_removidas_bd1)
 
     # ---- FASE 4: gravação ----
     if mudou_alguma_coisa:
